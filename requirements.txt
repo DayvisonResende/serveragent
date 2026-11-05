@@ -1,0 +1,3 @@
+# Dependências de execução do Sentinel (Fase 1 — Fundação)
+pydantic>=2.11,<3
+PyYAML>=6.0.2,<7

@@ -1,0 +1,33 @@
+# Configuração do Sentinel.
+# Caminhos relativos partem da raiz do projeto. Chaves desconhecidas são
+# rejeitadas na inicialização. Valide com: python -m sentinel check-config
+
+paths:
+  data_dir: data                    # banco, trava de instância, backups
+  log_dir: logs
+  database_file: data/sentinel.db
+
+logging:
+  level: INFO                       # DEBUG | INFO | WARNING | ERROR
+  max_bytes: 5242880                # tamanho de cada arquivo antes da rotação (5 MB)
+  backup_count: 5                   # arquivos antigos mantidos
+  console: true                     # ignorado sob pythonw.exe (sem console)
+
+database:
+  busy_timeout_ms: 5000
+  integrity_check_on_start: true    # PRAGMA quick_check a cada inicialização
+
+agent:
+  heartbeat_interval_seconds: 30    # sinal de vida gravado no banco
+  module_start_timeout_seconds: 15
+  module_stop_timeout_seconds: 10
+  shutdown_timeout_seconds: 10      # tempo para gravar eventos pendentes ao encerrar
+
+event_bus:
+  queue_size: 1000                  # eventos acima disso são descartados (e contados)
+  handler_timeout_seconds: 5
+
+scheduler:
+  default_job_timeout_seconds: 30
+  max_backoff_multiplier: 8         # teto do atraso após falhas consecutivas
+  max_load_factor: 4                # quanto tarefas não essenciais podem desacelerar sob carga
