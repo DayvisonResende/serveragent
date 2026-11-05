@@ -19,7 +19,10 @@ def free_port() -> int:
 
 
 def with_api_port(settings, port):
-    return settings.model_copy(update={"api": settings.api.model_copy(update={"port": port})})
+    # Hardware lento (ex.: i3 + antivírus) pode levar mais de 1 s na primeira importação
+    # do servidor HTTP; o limite padrão do agente é 15 s.
+    agent = settings.agent.model_copy(update={"module_start_timeout_seconds": 15})
+    return settings.model_copy(update={"api": settings.api.model_copy(update={"port": port}), "agent": agent})
 
 
 def query(settings, sql, params=()):
@@ -62,7 +65,7 @@ def test_full_agent_collects_serves_and_persists(settings):
         return await http_get(f"http://127.0.0.1:{port}/health"), await http_get(f"http://127.0.0.1:{port}/api/v1/system/status")
 
     report, (health, unauthenticated) = asyncio.run(run_briefly(agent, 1.5, probe))
-    assert report["agent"]["state"] == "running"
+    assert report["agent"]["state"] == "running", report["modules"]
     assert {m["name"]: m["status"] for m in report["modules"]} == {"monitor": "running", "api": "running"}
     assert health == (200, {"status": "ok"})
     assert unauthenticated[0] == 401
@@ -81,7 +84,7 @@ def test_port_in_use_degrades_api_but_monitoring_continues(settings):
     finally:
         blocker.close()
     modules = {m["name"]: m for m in report["modules"]}
-    assert report["agent"]["state"] == "degraded"
+    assert report["agent"]["state"] == "degraded", report["modules"]
     assert modules["api"]["status"] == "failed" and "porta em uso" in modules["api"]["error"]
     assert modules["monitor"]["status"] == "running" and modules["monitor"]["health"]["healthy"]
     failed = query(s, "SELECT title FROM events WHERE event_type = 'module.failed'")

@@ -189,7 +189,7 @@ class ModuleRegistry:
     def _mark_failed(self, entry: _Entry, name: str, reason: str) -> None:
         entry.status = ModuleStatus.FAILED
         entry.error = reason
-        log.error("Módulo falhou", extra={"module_name": name, "reason": reason})
+        log.error("Módulo '%s' falhou: %s", name, reason, extra={"module_name": name, "reason": reason})
         self._publish(EventType.MODULE_FAILED, Severity.HIGH, name, reason)
 
     def _publish(self, event_type: str, severity: Severity, name: str, reason: str) -> None:

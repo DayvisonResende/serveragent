@@ -11,7 +11,7 @@
       4. Parada limpa (sentinel stop) e reinício pela tarefa
       5. Detecção de encerramento forçado (para e reinicia a tarefa)
       6. API, segurança, login, tempo real e gravação de métricas (sentinel selfcheck)
-      7. Consumo de memória e CPU do processo real do agente
+      7. Consumo de memória e CPU do processo real do agente (após 60 s de aquecimento)
     O relatório é salvo em logs\verificacao-AAAAMMDD-HHMMSS.txt e aberto no Bloco de Notas.
     A verificação de reinício do computador continua manual.
 #>
@@ -214,17 +214,26 @@ try {
     Write-Report ""
 
     # 7. Recursos --------------------------------------------------------------
-    Write-Report "== 7. Consumo de recursos (amostra de 30 s) =="
+    Write-Report "== 7. Consumo de recursos (amostra de 60 s, após aquecimento) =="
     $current = Get-Status
+    # A partida (importações, primeira leitura de processos) não representa o repouso.
+    if ($current -and $current.latest_run) {
+        $started = [DateTimeOffset]::Parse($current.latest_run.started_at)
+        $warm = 60 - ([DateTimeOffset]::UtcNow - $started).TotalSeconds
+        if ($warm -gt 0) {
+            Write-Report ("  Aguardando {0:N0} s para o agente sair da fase de inicialização..." -f $warm)
+            Start-Sleep -Seconds ([math]::Ceiling($warm))
+        }
+    }
     $agentPid = if ($current -and $current.latest_run) { [int]$current.latest_run.pid } else { 0 }
     $p = if ($agentPid) { Get-Process -Id $agentPid -ErrorAction SilentlyContinue } else { $null }
     if ($null -eq $p) {
         Add-Result "Processo do agente" $false "PID $agentPid não encontrado."
     } else {
         $cpu0 = $p.TotalProcessorTime.TotalSeconds
-        Start-Sleep -Seconds 30
+        Start-Sleep -Seconds 60
         $p.Refresh()
-        $cpuPct = (($p.TotalProcessorTime.TotalSeconds - $cpu0) / 30 / [Environment]::ProcessorCount) * 100
+        $cpuPct = (($p.TotalProcessorTime.TotalSeconds - $cpu0) / 60 / [Environment]::ProcessorCount) * 100
         $memMb = [math]::Round($p.WorkingSet64 / 1MB, 1)
         Add-Result "Memória do agente (PID $agentPid)" ($memMb -le 200) "$memMb MB (meta: até 200 MB)"
         Add-Result "CPU em repouso" ($cpuPct -le 3) ("{0:N2}% (meta: até 3%)" -f $cpuPct)

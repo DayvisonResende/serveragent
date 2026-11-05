@@ -105,3 +105,20 @@ def test_temperature_unavailable_is_reported_never_invented(monkeypatch):
 def test_temperature_empty_sensor_list_is_unavailable(monkeypatch):
     monkeypatch.setattr(psutil, "sensors_temperatures", lambda: {}, raising=False)
     assert temperature.read_temperatures().available is False
+
+
+def test_static_process_attributes_are_read_once(monkeypatch):
+    calls = []
+    original = psutil.Process.username
+
+    def counting_username(self):
+        calls.append(self.pid)
+        return original(self)
+
+    monkeypatch.setattr(psutil.Process, "username", counting_username)
+    collector = ProcessCollector()
+    first = len(collector.collect())
+    calls.clear()
+    collector.collect()
+    # só processos novos (surgidos entre as coletas) consultam o dono de novo
+    assert len(calls) < max(5, first // 10)

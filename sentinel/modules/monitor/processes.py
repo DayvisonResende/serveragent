@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Callable, Literal, TypeVar
 
 import psutil
 
@@ -17,7 +17,15 @@ from sentinel.core.clock import to_iso
 
 SortKey = Literal["cpu", "memory", "name", "runtime"]
 
-_ATTRS = ["pid", "name", "exe", "username", "status", "create_time", "memory_info"]
+_T = TypeVar("_T")
+
+
+def _safe(getter: Callable[[], _T]) -> _T | None:
+    """Lê um atributo; sem permissão (processos de sistema) devolve None. Processo encerrado propaga."""
+    try:
+        return getter()
+    except (psutil.AccessDenied, psutil.ZombieProcess):
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,9 +46,15 @@ class ProcessInfo:
 
 
 class ProcessCollector:
+    """Nome, caminho e usuário não mudam durante a vida de um processo: são lidos
+    uma única vez e guardados em cache por (pid, horário de criação). A cada coleta
+    só memória, estado e CPU são consultados — consultar o dono de cada processo
+    é a operação mais cara no Windows."""
+
     def __init__(self) -> None:
         self._cpu_count = psutil.cpu_count(logical=True) or 1
         self._seen: set[tuple[int, float | None]] = set()
+        self._static: dict[tuple[int, float | None], tuple[str | None, str | None, str | None]] = {}
 
     def collect(self) -> list[ProcessInfo]:
         total_memory = psutil.virtual_memory().total
@@ -48,28 +62,34 @@ class ProcessCollector:
         current: set[tuple[int, float | None]] = set()
         # process_iter reaproveita os objetos Process entre chamadas, o que permite
         # cpu_percent(None) medir desde a coleta anterior.
-        for proc in psutil.process_iter(_ATTRS):
-            info = proc.info
-            pid = info["pid"]
+        for proc in psutil.process_iter(["pid", "create_time"]):
+            pid = proc.info["pid"]
             if pid == 0:  # "System Idle Process" (Windows) / swapper: não é um processo real
                 continue
-            identity = (pid, info.get("create_time"))
-            current.add(identity)
+            created = proc.info.get("create_time")
+            identity = (pid, created)
             try:
-                raw_cpu = proc.cpu_percent(None)
-                cpu = round(raw_cpu / self._cpu_count, 1) if identity in self._seen else None
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                cpu = None
-            mem = info.get("memory_info")
+                with proc.oneshot():
+                    static = self._static.get(identity)
+                    if static is None:
+                        static = (_safe(proc.name), _safe(proc.exe), _safe(proc.username))
+                    mem = _safe(proc.memory_info)
+                    status = _safe(proc.status)
+                    raw_cpu = _safe(lambda: proc.cpu_percent(None))
+            except psutil.NoSuchProcess:
+                continue  # encerrou durante a leitura: não aparece, em vez de aparecer com dados parciais
+            current.add(identity)
+            self._static[identity] = static
+            name, exe, username = static
+            cpu = round(raw_cpu / self._cpu_count, 1) if raw_cpu is not None and identity in self._seen else None
             rss = mem.rss if mem is not None else None
-            created = info.get("create_time")
             result.append(
                 ProcessInfo(
                     pid=pid,
-                    name=info.get("name") or f"pid {pid}",
-                    exe=info.get("exe") or None,
-                    username=info.get("username"),
-                    status=info.get("status"),
+                    name=name or f"pid {pid}",
+                    exe=exe or None,
+                    username=username,
+                    status=status,
                     started_at=to_iso(datetime.fromtimestamp(created, timezone.utc)) if created else None,
                     create_time=created,
                     cpu_percent=cpu,
@@ -78,6 +98,8 @@ class ProcessCollector:
                 )
             )
         self._seen = current
+        for gone in self._static.keys() - current:
+            del self._static[gone]
         return result
 
 
