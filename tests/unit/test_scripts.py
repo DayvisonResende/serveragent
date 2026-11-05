@@ -34,3 +34,24 @@ def test_clean_stop_failure_cannot_abort_install_scripts(script):
     lines = text.splitlines()
     stop_at = lines.index(stop_lines[0])
     assert any('$ErrorActionPreference = "Continue"' in line for line in lines[max(0, stop_at - 6):stop_at])
+
+
+def test_investigation_script_is_read_only():
+    """O script de investigação não pode alterar o sistema, executar o alvo ou enviar dados."""
+    import re
+
+    text = (ROOT / "scripts" / "investigate-process.ps1").read_bytes()[3:].decode("utf-8")
+    code = "\n".join(line.split("#")[0] for line in text.splitlines())  # ignora comentários
+    forbidden = [
+        r"Remove-Item", r"Stop-Process", r"Set-Item", r"New-ItemProperty", r"Remove-ItemProperty",
+        r"Rename-Item", r"Move-Item", r"Copy-Item", r"Unregister-", r"Disable-", r"Stop-Service",
+        r"Set-Service", r"Set-Mp", r"Remove-Mp", r"Add-Mp", r"Invoke-WebRequest", r"Invoke-RestMethod",
+        r"Net\.WebClient", r"\.Save\(", r"Start-ScheduledTask", r"Stop-ScheduledTask", r"Invoke-Expression", r"\biex\b",
+    ]
+    for pattern in forbidden:
+        assert not re.search(pattern, code, re.IGNORECASE), pattern
+    # O único programa iniciado é o Bloco de Notas, para exibir o relatório.
+    assert re.findall(r"Start-Process\s+(\S+)", code) == ["notepad.exe"]
+    # Escritas: somente a pasta de logs e o próprio relatório.
+    assert re.findall(r"Add-Content\s+-Path\s+(\$\w+)", code) == ["$Report"]
+    assert re.findall(r"New-Item\b.*?-Path\s+(\$\w+)", code) == ["$LogDir"]

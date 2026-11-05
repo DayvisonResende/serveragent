@@ -38,6 +38,7 @@ Atalhos de dois cliques na raiz do projeto:
 | `parar.bat` | para o agente de forma limpa |
 | `iniciar.bat` | roda o agente numa janela (depuração) |
 | `instalar.bat` / `desinstalar.bat` | instala/atualiza ou remove a tarefa agendada |
+| `investigar-processo.bat` | relatório **somente leitura** sobre um executável suspeito (assinatura, hash, origem, inicialização automática) |
 
 ## Uso
 
