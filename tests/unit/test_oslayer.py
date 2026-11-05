@@ -17,7 +17,9 @@ def test_second_instance_is_refused_until_release(tmp_path):
     finally:
         first.release()
     with InstanceLock(path):
-        assert path.read_text().strip() == str(os.getpid())
+        pass
+    # Lido após liberar: no Windows o byte travado não é legível nem pelo próprio processo.
+    assert path.read_text().strip() == str(os.getpid())
 
 
 def test_platform_info_is_populated():
