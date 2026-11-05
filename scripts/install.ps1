@@ -52,19 +52,33 @@ if (-not (Test-Path $VenvPython)) {
 
 # Atualização: o agente em execução precisa parar antes, senão o pip não consegue
 # substituir arquivos em uso e o processo antigo continuaria com o código anterior.
+# Uma versão antiga do agente pode não reconhecer o pedido de parada: nesse caso
+# "sentinel stop" retorna erro e seguimos para o plano B (parar a tarefa).
 $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if (Test-Path $VenvPython) {
     Push-Location $Root
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"  # erro de um programa externo não pode abortar a instalação
     try {
-        & $VenvPython -m sentinel stop --timeout 15 2>&1 | Write-Host
+        & $VenvPython -m sentinel stop --timeout 15
     } finally {
+        $ErrorActionPreference = $previousPreference
         Pop-Location
     }
 }
 if ($null -ne $existingTask -and (Get-ScheduledTask -TaskName $TaskName).State -eq "Running") {
     Write-Host "O agente não parou pelo comando; encerrando a tarefa agendada."
     Stop-ScheduledTask -TaskName $TaskName
-    Start-Sleep -Seconds 2
+}
+# Aguarda o processo do agente sair de fato (arquivos em uso impedem a atualização).
+for ($i = 0; $i -lt 20; $i++) {
+    $running = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" |
+        Where-Object { $_.CommandLine -like "*-m sentinel run*" })
+    if ($running.Count -eq 0) { break }
+    Start-Sleep -Milliseconds 500
+}
+if ($running.Count -gt 0) {
+    throw "O agente ainda está em execução (PID $($running[0].ProcessId)). Feche-o pelo Gerenciador de Tarefas e rode instalar.bat de novo."
 }
 
 Write-Host "Instalando dependências ..."

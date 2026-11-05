@@ -16,9 +16,12 @@ $VenvPython = Join-Path $Root ".venv\Scripts\python.exe"
 
 if (Test-Path $VenvPython) {
     Push-Location $Root
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"  # se a parada limpa falhar, a tarefa é parada abaixo
     try {
-        & $VenvPython -m sentinel stop 2>&1 | Write-Host
+        & $VenvPython -m sentinel stop
     } finally {
+        $ErrorActionPreference = $previousPreference
         Pop-Location
     }
 }
