@@ -11,6 +11,8 @@
       4. Inicialização automática: chaves Run/RunOnce, pastas Inicializar, tarefas agendadas, serviços
       5. Tarefas agendadas e itens de inicialização que executam de pastas graváveis pelo usuário
       6. Estado e detecções do Microsoft Defender
+      7. Cadeia de processos pais e locais de persistência menos comuns
+      8. Conteúdo (como texto) dos scripts .cmd/.bat/.vbs/.ps1 da pasta suspeita
 
     Nenhum processo é encerrado, nenhum arquivo é apagado ou executado e nada é
     enviado para a internet. O hash pode ser consultado manualmente no VirusTotal.
@@ -47,6 +49,17 @@ function Test-UserWritable([string]$Text) {
 
 $Targets = New-Object System.Collections.Generic.List[string]  # caminhos e pastas a procurar na inicialização
 $Targets.Add($Name)
+$ScriptFiles = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+
+function Add-RelatedFromCommandLine([string]$CommandLine) {
+    # Arquivos citados na linha de comando (ex.: cmd.exe /c wtime.cmd wlocale.cmd) também viram alvos.
+    foreach ($m in [regex]::Matches("$CommandLine", '[^"\\\s]+\.(cmd|bat|vbs|ps1|exe|js)', "IgnoreCase")) {
+        $leaf = $m.Value
+        if ($leaf -notin @("cmd.exe", "powershell.exe", "wscript.exe", "cscript.exe") -and -not $Targets.Contains($leaf)) {
+            $Targets.Add($leaf)
+        }
+    }
+}
 
 Write-Report "Investigação de processo suspeito - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Report "Alvo: $Name"
@@ -68,12 +81,20 @@ foreach ($p in $procs) {
         $owner = Invoke-CimMethod -InputObject $p -MethodName GetOwner -ErrorAction Stop
         Write-Report "    Usuário        : $($owner.Domain)\$($owner.User)"
     } catch { Write-Report "    Usuário        : (sem acesso)" }
-    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.ParentProcessId)" -ErrorAction SilentlyContinue
-    if ($parent) {
-        Write-Report "    Processo pai   : PID $($parent.ProcessId) $($parent.Name) - $($parent.ExecutablePath)"
-        Write-Report "                     $($parent.CommandLine)"
-    } else {
-        Write-Report "    Processo pai   : PID $($p.ParentProcessId) (já encerrado)"
+    # Cadeia de pais: mostra o que iniciou o carregador (ex.: userinit, explorer, svchost do Agendador).
+    $ancestorPid = $p.ParentProcessId
+    for ($level = 1; $level -le 6; $level++) {
+        $ancestor = Get-CimInstance Win32_Process -Filter "ProcessId=$ancestorPid" -ErrorAction SilentlyContinue
+        if (-not $ancestor) {
+            Write-Report "    Ancestral $level    : PID $ancestorPid (já encerrado - comum para userinit.exe após o logon)"
+            break
+        }
+        Write-Report "    Ancestral $level    : PID $($ancestor.ProcessId) $($ancestor.Name), iniciado em $($ancestor.CreationDate)"
+        Write-Report "                     $($ancestor.ExecutablePath)"
+        Write-Report "                     $($ancestor.CommandLine)"
+        Add-RelatedFromCommandLine $ancestor.CommandLine
+        if ($ancestor.Name -in @("explorer.exe", "services.exe", "wininit.exe", "winlogon.exe")) { break }
+        $ancestorPid = $ancestor.ParentProcessId
     }
     $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.ProcessId)" -ErrorAction SilentlyContinue)
     foreach ($c in $children) { Write-Report "    Processo filho : PID $($c.ProcessId) $($c.Name) - $($c.ExecutablePath)" }
@@ -97,12 +118,18 @@ foreach ($p in $procs) {
 # 2 e 3. Arquivos ---------------------------------------------------------------
 Write-Report "== 2. Arquivos com esse nome em pastas de usuário =="
 $files = New-Object System.Collections.Generic.List[string]
-foreach ($p in $procs) { if ($p.ExecutablePath -and (Test-Path -LiteralPath $p.ExecutablePath)) { $files.Add($p.ExecutablePath) } }
+$seenFiles = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
+foreach ($p in $procs) {
+    if ($p.ExecutablePath -and (Test-Path -LiteralPath $p.ExecutablePath)) {
+        $full = (Get-Item -LiteralPath $p.ExecutablePath -Force).FullName
+        if ($seenFiles.Add($full)) { $files.Add($full) }
+    }
+}
 foreach ($dir in $UserWritable) {
     if (-not (Test-Path -LiteralPath $dir)) { continue }
     Get-ChildItem -LiteralPath $dir -Recurse -Depth 6 -File -Force -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -eq $Name } |
-        ForEach-Object { if (-not $files.Contains($_.FullName)) { $files.Add($_.FullName) } }
+        ForEach-Object { if ($seenFiles.Add($_.FullName)) { $files.Add($_.FullName) } }
 }
 if ($files.Count -eq 0) { Write-Report "  Nenhum arquivo encontrado." }
 foreach ($path in $files) {
@@ -129,7 +156,11 @@ foreach ($path in $files) {
     Write-Report "    Executáveis/scripts na mesma pasta (somente esta pasta):"
     Get-ChildItem -LiteralPath $folder -File -Force -ErrorAction SilentlyContinue |
         Where-Object { $_.Extension -in ".exe", ".dll", ".js", ".vbs", ".ps1", ".bat", ".cmd", ".scr", ".lnk" } |
-        ForEach-Object { Write-Report ("      {0,-50} {1,12:N0} bytes  {2}" -f $_.Name, $_.Length, $_.LastWriteTime) }
+        ForEach-Object {
+            Write-Report ("      {0,-50} {1,12:N0} bytes  {2}  [{3}]" -f $_.Name, $_.Length, $_.LastWriteTime, $_.Attributes)
+            if ($_.Extension -in ".cmd", ".bat", ".vbs", ".ps1", ".js") { [void]$ScriptFiles.Add($_.FullName) }
+            if ($_.Extension -in ".exe", ".cmd", ".bat", ".vbs", ".ps1", ".js" -and -not $Targets.Contains($_.Name)) { $Targets.Add($_.Name) }
+        }
     Write-Report ""
 }
 
@@ -206,6 +237,52 @@ try {
 } catch {
     Write-Report "  (Assinaturas WMI não puderam ser lidas sem administrador.)"
 }
+$extraValues = @(
+    @("HKCU:\Environment", "UserInitMprLogonScript"),
+    @("HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon", "Userinit"),
+    @("HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon", "Shell"),
+    @("HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon", "Shell"),
+    @("HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Windows", "Load"),
+    @("HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Windows", "Run"),
+    @("HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Windows", "AppInit_DLLs"),
+    @("HKCU:\Software\Microsoft\Command Processor", "AutoRun"),
+    @("HKLM:\Software\Microsoft\Command Processor", "AutoRun")
+)
+Write-Report "  Locais de persistência menos comuns:"
+foreach ($pair in $extraValues) {
+    $value = (Get-ItemProperty -Path $pair[0] -Name $pair[1] -ErrorAction SilentlyContinue).($pair[1])
+    if ($null -eq $value -or "$value" -eq "") { continue }
+    $flag = if (Test-Target "$value") { "  <== ALVO"; $found = $true } elseif (Test-UserWritable "$value") { "  <== pasta do usuário" } else { "" }
+    Write-Report "    $($pair[0]) -> $($pair[1]) = $value$flag"
+}
+foreach ($key in @("HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run",
+                   "HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run")) {
+    $props = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+    if (-not $props) { continue }
+    foreach ($prop in $props.PSObject.Properties) {
+        if ($prop.Name -like "PS*") { continue }
+        $flag = if (Test-Target "$($prop.Value)") { "  <== ALVO"; $found = $true } else { "" }
+        Write-Report "    $key -> $($prop.Name) = $($prop.Value)$flag"
+    }
+}
+Get-ChildItem -Path "HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options" -ErrorAction SilentlyContinue |
+    ForEach-Object {
+        $dbg = (Get-ItemProperty -Path $_.PSPath -Name Debugger -ErrorAction SilentlyContinue).Debugger
+        if ($dbg) {
+            $flag = if (Test-Target "$dbg") { "  <== ALVO"; $found = $true } else { "" }
+            Write-Report "    IFEO $($_.PSChildName) -> Debugger = $dbg$flag"
+        }
+    }
+foreach ($root in @("HKLM:\Software\Microsoft\Active Setup\Installed Components", "HKLM:\Software\WOW6432Node\Microsoft\Active Setup\Installed Components")) {
+    Get-ChildItem -Path $root -ErrorAction SilentlyContinue | ForEach-Object {
+        $stub = (Get-ItemProperty -Path $_.PSPath -Name StubPath -ErrorAction SilentlyContinue).StubPath
+        if ($stub -and ((Test-Target "$stub") -or (Test-UserWritable "$stub"))) {
+            Write-Report "    Active Setup $($_.PSChildName) -> $stub  <== verificar"
+            if (Test-Target "$stub") { $found = $true }
+        }
+    }
+}
+Write-Report "  Alvos procurados: $($Targets -join ' | ')"
 if (-not $found) { Write-Report "  Nenhuma entrada de inicialização visível aponta para o alvo." }
 else { $Suspicious.Add("O alvo é iniciado automaticamente (veja a seção 3).") }
 Write-Report ""
@@ -220,6 +297,23 @@ foreach ($l in $allStartup) { Write-Report "    $l" }
 Write-Report "  Tarefas agendadas que executam de pastas graváveis pelo usuário:"
 if ($taskLines.Count -eq 0) { Write-Report "    (nenhuma)" }
 foreach ($l in $taskLines) { Write-Report "    $l" }
+Write-Report ""
+
+# Conteúdo dos scripts -----------------------------------------------------------
+Write-Report "== 4b. Conteúdo dos scripts da pasta suspeita (lido como texto, NÃO executado) =="
+if ($ScriptFiles.Count -eq 0) { Write-Report "  Nenhum script encontrado." }
+foreach ($scriptPath in $ScriptFiles) {
+    $info = Get-Item -LiteralPath $scriptPath -Force
+    Write-Report "  ---- $scriptPath ($($info.Length) bytes) ----"
+    if ($info.Length -gt 200KB) { Write-Report "    (grande demais para exibir)"; continue }
+    $lines = @(Get-Content -LiteralPath $scriptPath -TotalCount 200 -ErrorAction SilentlyContinue)
+    foreach ($line in $lines) {
+        $clean = ($line -replace '[^\x20-\x7E\t]', '?')  # só caracteres imprimíveis
+        if ($clean.Length -gt 300) { $clean = $clean.Substring(0, 300) + " …(cortado)" }
+        Write-Report "    | $clean"
+    }
+    if ($lines.Count -ge 200) { Write-Report "    | …(primeiras 200 linhas)" }
+}
 Write-Report ""
 
 # 6. Defender -------------------------------------------------------------------
