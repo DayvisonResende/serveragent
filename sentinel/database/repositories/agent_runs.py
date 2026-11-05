@@ -9,7 +9,7 @@ from sentinel.core.clock import to_iso, utc_now
 from sentinel.core.exceptions import DatabaseError
 from sentinel.database.database import Database
 
-ExitStatus = Literal["clean", "failed", "interrupted"]
+ExitStatus = Literal["clean", "failed", "interrupted", "system_shutdown"]
 
 
 class AgentRunRepository:
@@ -65,3 +65,7 @@ class AgentRunRepository:
 
     async def latest(self) -> dict[str, Any] | None:
         return await self._db.fetch_one("SELECT * FROM agent_runs ORDER BY id DESC LIMIT 1")
+
+    async def previous(self) -> dict[str, Any] | None:
+        """Execução anterior à mais recente (mostra como o agente terminou da última vez)."""
+        return await self._db.fetch_one("SELECT * FROM agent_runs ORDER BY id DESC LIMIT 1 OFFSET 1")

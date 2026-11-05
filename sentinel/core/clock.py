@@ -12,3 +12,9 @@ def to_iso(value: datetime) -> str:
     if value.tzinfo is None:
         raise ValueError("datetime sem fuso horário não pode ser persistido")
     return value.astimezone(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def br_number(value: float, decimals: int = 1) -> str:
+    """Formata número no padrão brasileiro para textos exibidos ao usuário (1.234,5)."""
+    text = f"{value:,.{decimals}f}"
+    return text.replace(",", "\x00").replace(".", ",").replace("\x00", ".")

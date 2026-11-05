@@ -1,3 +1,7 @@
-# Dependências de execução do Sentinel (Fase 1 — Fundação)
+# Dependências de execução do Sentinel
 pydantic>=2.11,<3
 PyYAML>=6.0.2,<7
+psutil>=7,<8
+fastapi>=0.115,<1
+uvicorn>=0.32,<1
+websockets>=13,<18

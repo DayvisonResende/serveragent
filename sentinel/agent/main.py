@@ -4,6 +4,9 @@
     python -m sentinel run           executa o agente em primeiro plano
     python -m sentinel status        mostra a última execução e eventos recentes
     python -m sentinel check-config  valida e exibe a configuração efetiva
+    python -m sentinel dashboard     abre o dashboard no navegador (login de uso único)
+    python -m sentinel stop          pede ao agente em execução que encerre de forma limpa
+    python -m sentinel selfcheck     testa API, segurança, tempo real e gravação de métricas
 """
 
 from __future__ import annotations
@@ -13,7 +16,10 @@ import asyncio
 import json
 import logging
 import sys
+import threading
+import time
 import traceback
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -27,9 +33,10 @@ from sentinel.core.clock import utc_now
 from sentinel.core.event_bus import EventType
 from sentinel.core.exceptions import ConfigurationError, DatabaseError, InstanceLockError, SentinelError
 from sentinel.database.database import Database
-from sentinel.database.repositories import AgentRunRepository, EventRepository
+from sentinel.database.repositories import AgentRunRepository, AuthRepository, EventRepository
 from sentinel.oslayer.info import get_platform_info
 from sentinel.oslayer.instance_lock import InstanceLock
+from sentinel.oslayer.shutdown_listener import ShutdownListener
 from sentinel.oslayer.signals import install_stop_handlers
 
 EXIT_OK = 0
@@ -54,6 +61,12 @@ def main(argv: list[str] | None = None) -> int:
     status_parser = commands.add_parser("status", help="mostra a última execução e os eventos recentes")
     status_parser.add_argument("--json", action="store_true", help="saída em JSON (ASCII), para scripts")
     commands.add_parser("check-config", help="valida e exibe a configuração efetiva")
+    dash = commands.add_parser("dashboard", help="abre o dashboard no navegador com um login de uso único")
+    dash.add_argument("--no-browser", action="store_true", help="apenas imprime o link")
+    stop_parser = commands.add_parser("stop", help="pede ao agente em execução que encerre de forma limpa")
+    stop_parser.add_argument("--timeout", type=float, default=20.0, help="segundos para aguardar o encerramento")
+    check_parser = commands.add_parser("selfcheck", help="testa a API, a segurança e o tempo real do agente em execução")
+    check_parser.add_argument("--json", action="store_true", help="saída em JSON (ASCII), para scripts")
     args = parser.parse_args(argv)
 
     error_log_dir = DEFAULT_ERROR_LOG_DIR
@@ -66,6 +79,12 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_run(settings)
         if args.command == "status":
             return cmd_status(settings, as_json=args.json)
+        if args.command == "selfcheck":
+            return cmd_selfcheck(settings, as_json=args.json)
+        if args.command == "stop":
+            return cmd_stop(settings, args.timeout)
+        if args.command == "dashboard":
+            return cmd_dashboard(settings, open_browser=not args.no_browser)
         if args.command == "check-config":
             print(json.dumps(settings.model_dump(mode="json"), indent=2, ensure_ascii=False))
             return EXIT_OK
@@ -113,11 +132,119 @@ def cmd_run(settings: Settings) -> int:
     return EXIT_OK
 
 
+def build_agent(settings: Settings) -> Agent:
+    """Raiz de composição: cria o agente e conecta os módulos."""
+    from sentinel.api.server import ApiModule
+    from sentinel.modules.monitor import MetricsStore, MonitorModule
+
+    m = settings.monitoring
+    store = MetricsStore(live_capacity=int(m.live_history_seconds / m.fast_interval_seconds) + 1)
+    monitor = MonitorModule(store)
+    agent = Agent(settings, modules=[monitor])
+    if settings.api.enabled:
+        agent.registry.register(
+            ApiModule(store, agent.health_report, lambda: monitor.alerts.active() if monitor.alerts else [])
+        )
+    return agent
+
+
 async def _run_agent(settings: Settings) -> None:
+    loop = asyncio.get_running_loop()
     stop = asyncio.Event()
-    install_stop_handlers(asyncio.get_running_loop(), stop.set)
-    agent = Agent(settings)
-    await agent.run(stop)
+    agent = build_agent(settings)
+    install_stop_handlers(loop, lambda: agent.request_stop(stop))
+
+    finished = threading.Event()
+    listener = ShutdownListener(
+        lambda kind: loop.call_soon_threadsafe(agent.request_stop, stop, "system_shutdown", kind),
+        finished.wait,
+    )
+    listener.start()
+    try:
+        await agent.run(stop)
+    finally:
+        finished.set()
+        listener.stop()
+
+
+def cmd_selfcheck(settings: Settings, as_json: bool = False) -> int:
+    from sentinel.agent.selfcheck import as_json as checks_json
+    from sentinel.agent.selfcheck import run_selfcheck
+
+    checks = run_selfcheck(settings)
+    if as_json:
+        print(checks_json(checks))
+    else:
+        for c in checks:
+            print(f"[{'OK' if c.ok else 'FALHA':5}] {c.name} - {c.detail}")
+    return EXIT_OK if checks and all(c.ok for c in checks) else EXIT_ERROR
+
+
+def cmd_stop(settings: Settings, timeout: float = 20.0) -> int:
+    from sentinel.agent.lifecycle import STOP_REQUEST_FILE
+
+    if not settings.paths.database_file.exists():
+        print("Banco de dados não encontrado; o agente nunca foi executado.")
+        return EXIT_OK
+    run = asyncio.run(_read_status(settings))["latest_run"]
+    if run is None or run["state"] != "running":
+        print("O agente não está em execução.")
+        return EXIT_OK
+    request = settings.paths.data_dir / STOP_REQUEST_FILE
+    request.write_text(str(run["id"]), encoding="ascii")
+    print(f"Parada solicitada à execução #{run['id']} (PID {run['pid']}). Aguardando…")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(0.5)
+        latest = asyncio.run(_read_status(settings))["latest_run"]
+        if latest is not None and latest["id"] == run["id"] and latest["state"] == "stopped":
+            print(f"Agente encerrado ({_EXIT_LABELS.get(latest['exit_status'], latest['exit_status'])}).")
+            return EXIT_OK
+    request.unlink(missing_ok=True)
+    print(f"O agente não encerrou em {timeout:.0f}s.", file=sys.stderr)
+    return EXIT_ERROR
+
+
+def cmd_dashboard(settings: Settings, open_browser: bool = True) -> int:
+    if not settings.api.enabled:
+        print("A API está desativada em settings.yaml (api.enabled: false).", file=sys.stderr)
+        return EXIT_ERROR
+    if not settings.paths.database_file.exists():
+        print("Banco de dados não encontrado. Execute 'python -m sentinel init'.", file=sys.stderr)
+        return EXIT_ERROR
+    data = asyncio.run(_read_status(settings))
+    run = data["latest_run"]
+    if run is None or run["state"] != "running":
+        print("O agente não está em execução. Inicie-o (tarefa agendada ou iniciar.bat) e tente novamente.", file=sys.stderr)
+        return EXIT_ERROR
+
+    code = asyncio.run(_create_login_code(settings))
+    host = "127.0.0.1" if settings.api.host == "localhost" else settings.api.host
+    host = f"[{host}]" if ":" in host else host
+    url = f"http://{host}:{settings.api.port}/login?code={code}"
+    print(f"Link de acesso (uso único, válido por {settings.api.login_code_seconds}s):")
+    print(url)
+    if open_browser and not webbrowser.open(url):
+        print("Não foi possível abrir o navegador automaticamente; copie o link acima.")
+    return EXIT_OK
+
+
+async def _create_login_code(settings: Settings) -> str:
+    db = Database(settings.paths.database_file, settings.database.busy_timeout_ms)
+    await db.open()
+    try:
+        return await AuthRepository(db).create_login_code(settings.api.login_code_seconds)
+    finally:
+        await db.close()
+
+
+_EXIT_LABELS = {
+    "clean": "clean",
+    "system_shutdown": "desligamento do Windows",
+    "unclean": "encerramento inesperado",
+    "failed": "falha",
+    "interrupted": "interrompido",
+}
 
 
 def cmd_status(settings: Settings, as_json: bool = False) -> int:
@@ -140,7 +267,7 @@ def cmd_status(settings: Settings, as_json: bool = False) -> int:
         age = run["heartbeat_age_seconds"]
         state = {
             "running": "em execução",
-            "stopped": f"parado ({run['exit_status']}) em {run['stopped_at']}",
+            "stopped": f"parado ({_EXIT_LABELS.get(run['exit_status'], run['exit_status'])}) em {run['stopped_at']}",
             "stale": f"sem sinal de vida há {age:.0f}s (possível encerramento inesperado)",
         }[run["state"]]
         print(f"Execução #{run['id']} — PID {run['pid']} — versão {run['version']}")
@@ -162,7 +289,9 @@ async def _read_status(settings: Settings) -> dict[str, Any]:
     db = Database(settings.paths.database_file, settings.database.busy_timeout_ms)
     await db.open()
     try:
-        run = await AgentRunRepository(db).latest()
+        runs_repo = AgentRunRepository(db)
+        run = await runs_repo.latest()
+        previous = await runs_repo.previous()
         events_repo = EventRepository(db)
         recent = await events_repo.recent(10)
         unclean = await events_repo.count(EventType.AGENT_UNCLEAN_SHUTDOWN)
@@ -183,6 +312,7 @@ async def _read_status(settings: Settings) -> dict[str, Any]:
         "latest_run": run,
         "recent_events": recent,
         "unclean_shutdown_events": unclean,
+        "previous_run": previous,
     }
 
 

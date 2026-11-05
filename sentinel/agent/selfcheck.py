@@ -1,0 +1,177 @@
+"""Autoverificação do agente em execução (``python -m sentinel selfcheck``).
+
+Testa, de fora, o que o usuário depende: API respondendo, proteções de
+segurança ativas, login de uso único, dados reais chegando por REST e por
+WebSocket e métricas sendo gravadas. Usado pelo verificar.bat.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import http.client
+import json
+import sqlite3
+import time
+from dataclasses import asdict, dataclass
+from typing import Any
+
+from sentinel.agent.config import Settings
+from sentinel.api.security import SESSION_COOKIE
+from sentinel.database.database import Database
+from sentinel.database.repositories import AuthRepository
+
+
+@dataclass
+class Check:
+    name: str
+    ok: bool
+    detail: str = ""
+
+
+class _Http:
+    def __init__(self, host: str, port: int) -> None:
+        self.host = "127.0.0.1" if host == "localhost" else host
+        self.port = port
+        self.host_header = f"[{self.host}]:{port}" if ":" in self.host else f"{self.host}:{port}"
+
+    def request(self, method: str, path: str, headers: dict[str, str] | None = None) -> tuple[int, dict[str, str], bytes]:
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+        try:
+            all_headers = {"Host": self.host_header, **(headers or {})}
+            conn.request(method, path, headers=all_headers)
+            resp = conn.getresponse()
+            return resp.status, {k.lower(): v for k, v in resp.getheaders()}, resp.read()
+        finally:
+            conn.close()
+
+
+def run_selfcheck(settings: Settings) -> list[Check]:
+    checks: list[Check] = []
+    api = settings.api
+    if not api.enabled:
+        return [Check("API habilitada", False, "api.enabled está desativado em settings.yaml")]
+    http = _Http(api.host, api.port)
+    origin = f"http://{http.host_header}"
+
+    def attempt(name: str, fn: Any) -> Any:
+        try:
+            return fn()
+        except Exception as exc:  # cada verificação falha de forma isolada e relatada
+            checks.append(Check(name, False, f"{type(exc).__name__}: {exc}"))
+            return None
+
+    # 1. disponibilidade
+    res = attempt("API respondendo", lambda: http.request("GET", "/health"))
+    if res is None:
+        return checks
+    checks.append(Check("API respondendo", res[0] == 200, f"GET /health -> {res[0]}"))
+
+    # 2. proteções
+    res = attempt("Rotas exigem sessão", lambda: http.request("GET", "/api/v1/system/status"))
+    if res:
+        checks.append(Check("Rotas exigem sessão", res[0] == 401, f"sem cookie -> {res[0]}"))
+    res = attempt("Host estranho recusado", lambda: http.request("GET", "/health", {"Host": "attacker.example"}))
+    if res:
+        checks.append(Check("Host estranho recusado (DNS rebinding)", res[0] == 400, f"-> {res[0]}"))
+    res = attempt(
+        "Origem estranha recusada",
+        lambda: http.request("POST", "/api/v1/auth/logout", {"Origin": "http://attacker.example"}),
+    )
+    if res:
+        checks.append(Check("Origem estranha recusada (CSRF)", res[0] == 403, f"-> {res[0]}"))
+
+    # 3. login de uso único
+    code = attempt("Criar código de login", lambda: asyncio.run(_create_code(settings)))
+    if code is None:
+        return checks
+    res = attempt("Login com código", lambda: http.request("GET", f"/login?code={code}"))
+    if res is None:
+        return checks
+    cookie_header = res[1].get("set-cookie", "")
+    token = _cookie_value(cookie_header, SESSION_COOKIE)
+    flags_ok = "httponly" in cookie_header.lower() and "samesite=strict" in cookie_header.lower()
+    checks.append(Check("Login com código de uso único", res[0] == 303 and token is not None and flags_ok,
+                        f"-> {res[0]}, cookie HttpOnly+SameSite=Strict: {flags_ok}"))
+    reuse = attempt("Código não reutilizável", lambda: http.request("GET", f"/login?code={code}"))
+    if reuse:
+        checks.append(Check("Código não reutilizável", reuse[0] == 401, f"segundo uso -> {reuse[0]}"))
+    if token is None:
+        return checks
+    auth = {"Cookie": f"{SESSION_COOKIE}={token}"}
+
+    # 4. dados reais
+    res = attempt("Status com dados reais", lambda: http.request("GET", "/api/v1/system/status", auth))
+    if res and res[0] == 200:
+        data = json.loads(res[2])
+        current = data.get("current") or {}
+        cpu = (current.get("cpu") or {}).get("percent")
+        ok = cpu is not None and 0 <= cpu <= 100 and (current.get("age_seconds") or 999) < 30
+        checks.append(Check("Status com dados reais", ok, f"CPU {cpu}%, coleta há {current.get('age_seconds')}s"))
+        machine = data.get("machine") or {}
+        checks.append(Check("Processador identificado", bool(machine.get("cpu_model")), machine.get("cpu_model") or "não identificado"))
+        temp = data.get("temperature") or {}
+        checks.append(Check("Temperatura (informativo)", True,
+                            "sensores disponíveis" if temp.get("available") else (temp.get("message") or "não coletada ainda")))
+    elif res:
+        checks.append(Check("Status com dados reais", False, f"-> {res[0]}"))
+
+    # 5. tempo real
+    attempt("WebSocket em tempo real", lambda: checks.append(_check_websocket(http, auth["Cookie"], origin, settings)))
+
+    # 6. sessão encerrada
+    res = attempt("Logout", lambda: http.request("POST", "/api/v1/auth/logout", {**auth, "Origin": origin}))
+    if res:
+        after = http.request("GET", "/api/v1/auth/session", auth)
+        checks.append(Check("Logout invalida a sessão", res[0] == 204 and after[0] == 401, f"-> {res[0]}, depois {after[0]}"))
+
+    # 7. persistência
+    attempt("Métricas gravadas no banco", lambda: checks.append(_check_persisted(settings)))
+    return checks
+
+
+def _check_websocket(http: _Http, cookie: str, origin: str, settings: Settings) -> Check:
+    from websockets.sync.client import connect
+
+    url = f"ws://{http.host_header}/api/v1/ws"
+    wait = settings.monitoring.fast_interval_seconds * 2 + 3
+    with connect(url, additional_headers={"Cookie": cookie, "Origin": origin}, open_timeout=10) as ws:
+        hello = json.loads(ws.recv(timeout=10))
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            msg = json.loads(ws.recv(timeout=wait))
+            if msg.get("type") == "metrics":
+                cpu = msg["data"]["cpu"]["percent"]
+                return Check("WebSocket em tempo real", hello.get("type") == "hello", f"métrica recebida: CPU {cpu}%")
+    return Check("WebSocket em tempo real", False, f"nenhuma métrica em {wait:.0f}s")
+
+
+def _check_persisted(settings: Settings) -> Check:
+    conn = sqlite3.connect(f"file:{settings.paths.database_file}?mode=ro", uri=True)
+    try:
+        count, last = conn.execute("SELECT COUNT(*), MAX(ts_epoch) FROM system_metrics").fetchone()
+    finally:
+        conn.close()
+    if not count:
+        return Check("Métricas gravadas no banco", False, "nenhuma linha em system_metrics")
+    return Check("Métricas gravadas no banco", True, f"{count} registros, último há {time.time() - last:.0f}s")
+
+
+async def _create_code(settings: Settings) -> str:
+    db = Database(settings.paths.database_file, settings.database.busy_timeout_ms)
+    await db.open()
+    try:
+        return await AuthRepository(db).create_login_code(settings.api.login_code_seconds)
+    finally:
+        await db.close()
+
+
+def _cookie_value(header: str, name: str) -> str | None:
+    for part in header.split(";"):
+        key, _, value = part.strip().partition("=")
+        if key == name and value:
+            return value
+    return None
+
+
+def as_json(checks: list[Check]) -> str:
+    return json.dumps([asdict(c) for c in checks], ensure_ascii=True)

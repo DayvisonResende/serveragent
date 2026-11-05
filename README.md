@@ -3,9 +3,11 @@
 Agente local de administração, monitoramento e manutenção de servidores Windows.
 Especificação completa em [PRD.md](PRD.md).
 
-**Estado atual:** Fase 1 — Fundação concluída. Ainda não há monitoramento,
-dashboard ou IA: o agente inicia, mantém heartbeat, registra eventos e
-auditoria, e encerra de forma limpa. As próximas fases constroem sobre isso.
+**Estado atual:** Fase 2 — Monitoramento. O agente coleta CPU, memória, disco,
+rede, temperatura (quando disponível) e processos; grava histórico; gera
+alertas; reduz o próprio ritmo quando o computador está sob carga; e serve um
+dashboard local protegido. Ainda não há gerenciamento de servidores, aprovações
+ou IA (Fases 3–5).
 
 ## Requisitos
 
@@ -22,8 +24,20 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 
 Isso cria `.venv`, instala dependências, executa `sentinel init` e registra a
 tarefa agendada **"Sentinel Agent"** (inicia no logon, privilégios limitados,
-reinício automático em falha). Para remover: `scripts\uninstall.ps1` (os dados
-são mantidos).
+reinício automático em falha). Rodar de novo atualiza a instalação (o agente
+antigo é parado de forma limpa antes). Para remover: `scripts\uninstall.ps1`
+(os dados são mantidos).
+
+Atalhos de dois cliques na raiz do projeto:
+
+| Arquivo | Ação |
+|---|---|
+| `abrir-dashboard.bat` | abre o dashboard (link de acesso de uso único) |
+| `status.bat` | estado do agente e eventos recentes |
+| `verificar.bat` | verificação completa com relatório em `logs\verificacao-*.txt` |
+| `parar.bat` | para o agente de forma limpa |
+| `iniciar.bat` | roda o agente numa janela (depuração) |
+| `instalar.bat` / `desinstalar.bat` | instala/atualiza ou remove a tarefa agendada |
 
 ## Uso
 
@@ -32,6 +46,9 @@ python -m sentinel init           # configuração, diretórios e banco (idempot
 python -m sentinel run            # executa o agente em primeiro plano (Ctrl+C encerra)
 python -m sentinel status         # última execução, heartbeat e eventos recentes
 python -m sentinel check-config   # valida e mostra a configuração efetiva
+python -m sentinel dashboard      # abre o dashboard em http://127.0.0.1:8765 com login de uso único
+python -m sentinel stop           # pede ao agente que encerre de forma limpa
+python -m sentinel selfcheck      # testa API, segurança, tempo real e gravação de métricas
 ```
 
 Códigos de saída: `0` ok · `1` erro · `2` configuração · `3` outra instância em execução · `4` banco.
@@ -51,10 +68,13 @@ python -m venv .venv
 
 ```text
 sentinel/
-  agent/        CLI, configuração, ciclo de vida, agendador, logs, saúde
-  core/         barramento de eventos, registro de módulos, estado, exceções
+  agent/        CLI, configuração, ciclo de vida, agendador, logs, saúde, autoverificação
+  core/         barramento de eventos, módulos, estado, gerenciador de recursos, exceções
+  modules/      módulos funcionais (monitor)
+  api/          API local FastAPI + WebSocket, segurança
   oslayer/      tudo que é específico do sistema operacional
   database/     conexão SQLite, migrações versionadas, repositórios
+dashboard/      interface web (HTML/CSS/JS, sem dependências externas)
 config/         settings.yaml
 scripts/        install / uninstall / start (PowerShell)
 tests/          unit/ e integration/

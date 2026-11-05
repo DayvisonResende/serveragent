@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sentinel</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <script type="module" src="/js/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Sentinel</div>
+    <nav class="nav" aria-label="Navegação principal">
+      <a href="#/" data-route="/">Visão geral</a>
+      <a href="#/sistema" data-route="/sistema">Sistema</a>
+      <a href="#/processos" data-route="/processos">Processos</a>
+      <a href="#/historico" data-route="/historico">Histórico</a>
+    </nav>
+    <div class="topbar-status">
+      <span id="live-status" class="pill pill-muted" role="status">Conectando…</span>
+      <button id="logout" class="link-button" type="button">Sair</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden role="alert"></div>
+
+  <main id="view" class="view" tabindex="-1">
+    <p class="muted">Carregando…</p>
+  </main>
+
+  <div id="tooltip" class="tooltip" hidden></div>
+</body>
+</html>

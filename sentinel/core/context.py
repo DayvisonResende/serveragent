@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from sentinel.agent.config import Settings
     from sentinel.agent.scheduler import Scheduler
     from sentinel.core.event_bus import EventBus
+    from sentinel.core.resource_manager import ResourceManager
     from sentinel.database.database import Database
     from sentinel.oslayer.info import PlatformInfo
 
@@ -24,3 +25,4 @@ class AgentContext:
     scheduler: Scheduler
     database: Database
     platform: PlatformInfo
+    resources: ResourceManager

@@ -31,3 +31,46 @@ scheduler:
   default_job_timeout_seconds: 30
   max_backoff_multiplier: 8         # teto do atraso após falhas consecutivas
   max_load_factor: 4                # quanto tarefas não essenciais podem desacelerar sob carga
+
+monitoring:                         # intervalos de coleta (PRD 5.8)
+  fast_interval_seconds: 5          # CPU, memória e rede — essencial, nunca desacelera
+  disk_interval_seconds: 30
+  process_interval_seconds: 15
+  temperature_interval_seconds: 30
+  persist_interval_seconds: 60      # médias gravadas no banco
+  process_snapshot_interval_seconds: 300
+  process_snapshot_top_n: 10        # processos que mais usam CPU e memória
+  disk_history_interval_seconds: 1800
+  live_history_seconds: 3600        # histórico em memória na resolução máxima
+  collector_timeout_seconds: 10
+
+alerts:
+  cpu_percent: 90
+  cpu_sustained_seconds: 60         # só alerta se durar isso
+  memory_percent: 90
+  memory_sustained_seconds: 30
+  disk_free_warning_percent: 10
+  disk_free_critical_percent: 5
+  hysteresis_percent: 5             # margem para considerar normalizado
+
+resources:                          # modo de baixa prioridade (PRD 13.3)
+  pressure_cpu_percent: 80
+  pressure_memory_percent: 90
+  severe_cpu_percent: 95
+  pressure_load_factor: 2           # tarefas não essenciais ficam 2x mais lentas
+  severe_load_factor: 4
+  smoothing_samples: 6              # média das últimas 6 amostras (30 s)
+  hysteresis_percent: 10
+
+retention:                          # dias mantidos por categoria (PRD 16.2)
+  metrics_days: 30
+  process_snapshots_days: 7
+  disk_history_days: 365
+  events_days: 90
+
+api:
+  enabled: true
+  host: 127.0.0.1                   # somente local nesta versão
+  port: 8765
+  session_hours: 12                 # duração da sessão do dashboard
+  login_code_seconds: 120           # validade do link de acesso de uso único

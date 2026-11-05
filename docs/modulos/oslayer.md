@@ -8,6 +8,9 @@
 | `info.py` | Sistema, versão, arquitetura, Python e se o processo é administrador |
 | `instance_lock.py` | Trava de instância única (`msvcrt.locking` no Windows, `flock` em POSIX) |
 | `signals.py` | Ctrl+C / SIGBREAK no Windows; SIGINT / SIGTERM em POSIX |
+| `shutdown_listener.py` | Janela oculta que recebe o aviso de desligamento/logoff do Windows e pede parada limpa |
+| `hardware.py` | Modelo do processador (registro do Windows / `/proc/cpuinfo`) e nome do computador |
+| `sockets.py` | Socket da API com `SO_EXCLUSIVEADDRUSE` no Windows |
 
 - A trava é liberada pelo próprio SO se o processo morrer — não sobra arquivo "preso".
 - No Windows o PID gravado no arquivo de trava não é legível por outro processo

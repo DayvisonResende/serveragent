@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from sentinel.core.exceptions import ConfigurationError
 
@@ -70,6 +70,71 @@ class SchedulerSettings(_Section):
     max_load_factor: float = Field(4, ge=1, le=16)
 
 
+class MonitoringSettings(_Section):
+    """Intervalos de coleta (PRD 5.8). Sob carga, os não essenciais são alongados."""
+
+    fast_interval_seconds: float = Field(5, ge=1, le=300)  # CPU, RAM, rede (essencial)
+    disk_interval_seconds: float = Field(30, ge=5, le=3600)
+    process_interval_seconds: float = Field(15, ge=5, le=3600)
+    temperature_interval_seconds: float = Field(30, ge=5, le=3600)
+    persist_interval_seconds: float = Field(60, ge=10, le=3600)  # agregação gravada no banco
+    process_snapshot_interval_seconds: float = Field(300, ge=30, le=86_400)
+    process_snapshot_top_n: int = Field(10, ge=1, le=100)
+    disk_history_interval_seconds: float = Field(1800, ge=60, le=86_400)
+    live_history_seconds: int = Field(3600, ge=60, le=6 * 3600)  # histórico em memória (resolução total)
+    collector_timeout_seconds: float = Field(10, ge=1, le=60)
+
+
+class AlertSettings(_Section):
+    cpu_percent: float = Field(90, ge=10, le=100)
+    cpu_sustained_seconds: float = Field(60, ge=0, le=3600)
+    memory_percent: float = Field(90, ge=10, le=100)
+    memory_sustained_seconds: float = Field(30, ge=0, le=3600)
+    disk_free_warning_percent: float = Field(10, ge=1, le=50)
+    disk_free_critical_percent: float = Field(5, ge=0.5, le=50)
+    hysteresis_percent: float = Field(5, ge=0, le=20)  # margem para considerar normalizado
+
+
+class ResourceSettings(_Section):
+    """Modo de baixa prioridade (PRD 13.3)."""
+
+    pressure_cpu_percent: float = Field(80, ge=10, le=100)
+    pressure_memory_percent: float = Field(90, ge=10, le=100)
+    severe_cpu_percent: float = Field(95, ge=10, le=100)
+    pressure_load_factor: float = Field(2, ge=1, le=16)
+    severe_load_factor: float = Field(4, ge=1, le=16)
+    smoothing_samples: int = Field(6, ge=1, le=120)  # média móvel das amostras rápidas
+    hysteresis_percent: float = Field(10, ge=0, le=50)
+
+
+class RetentionSettings(_Section):
+    """Retenção por categoria (PRD 16.2). Executada diariamente."""
+
+    metrics_days: int = Field(30, ge=1, le=3650)
+    process_snapshots_days: int = Field(7, ge=1, le=3650)
+    disk_history_days: int = Field(365, ge=7, le=3650)
+    events_days: int = Field(90, ge=7, le=3650)
+
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+class ApiSettings(_Section):
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = Field(8765, ge=1024, le=65_535)
+    session_hours: float = Field(12, ge=0.25, le=720)
+    login_code_seconds: int = Field(120, ge=10, le=600)
+
+    @field_validator("host")
+    @classmethod
+    def _loopback_only(cls, value: str) -> str:
+        # Acesso remoto exige autenticação por senha e HTTPS (PRD 17.3/17.4) — previsto para fase futura.
+        if value not in _LOOPBACK_HOSTS:
+            raise ValueError("a API só pode escutar em 127.0.0.1, ::1 ou localhost nesta versão")
+        return value
+
+
 class Settings(_Section):
     paths: PathsSettings = PathsSettings()
     logging: LoggingSettings = LoggingSettings()
@@ -77,6 +142,21 @@ class Settings(_Section):
     agent: AgentSettings = AgentSettings()
     event_bus: EventBusSettings = EventBusSettings()
     scheduler: SchedulerSettings = SchedulerSettings()
+    monitoring: MonitoringSettings = MonitoringSettings()
+    alerts: AlertSettings = AlertSettings()
+    resources: ResourceSettings = ResourceSettings()
+    retention: RetentionSettings = RetentionSettings()
+    api: ApiSettings = ApiSettings()
+
+    @model_validator(mode="after")
+    def _cross_checks(self) -> Settings:
+        if self.resources.severe_load_factor > self.scheduler.max_load_factor:
+            raise ValueError("resources.severe_load_factor não pode exceder scheduler.max_load_factor")
+        if self.resources.pressure_load_factor > self.resources.severe_load_factor:
+            raise ValueError("resources.pressure_load_factor não pode exceder resources.severe_load_factor")
+        if self.alerts.disk_free_critical_percent >= self.alerts.disk_free_warning_percent:
+            raise ValueError("alerts.disk_free_critical_percent deve ser menor que disk_free_warning_percent")
+        return self
 
     def with_resolved_paths(self, base: Path = PROJECT_ROOT) -> Settings:
         return self.model_copy(update={"paths": self.paths.resolved(base)})

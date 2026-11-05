@@ -55,9 +55,9 @@ def test_migrations_apply_once_and_enable_wal(tmp_path):
         return first, second, mode, tables
 
     first, second, mode, tables = with_db(tmp_path, scenario)
-    assert first == [1] and second == []
+    assert first == [m.version for m in discover_migrations()] and second == []
     assert mode["journal_mode"] == "wal"
-    assert {"events", "audit_logs", "agent_runs", "schema_migrations"} <= tables
+    assert {"events", "audit_logs", "agent_runs", "schema_migrations", "system_metrics", "sessions"} <= tables
 
 
 def test_failed_migration_rolls_back(tmp_path):

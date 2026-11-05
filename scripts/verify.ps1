@@ -8,8 +8,10 @@
       1. Estado do agente, da tarefa agendada e dos processos
       2. Testes automáticos (pytest)
       3. Recusa de uma segunda instância
-      4. Detecção de encerramento forçado (para e reinicia a tarefa)
-      5. Consumo de memória e CPU do processo real do agente
+      4. Parada limpa (sentinel stop) e reinício pela tarefa
+      5. Detecção de encerramento forçado (para e reinicia a tarefa)
+      6. API, segurança, login, tempo real e gravação de métricas (sentinel selfcheck)
+      7. Consumo de memória e CPU do processo real do agente
     O relatório é salvo em logs\verificacao-AAAAMMDD-HHMMSS.txt e aberto no Bloco de Notas.
     A verificação de reinício do computador continua manual.
 #>
@@ -103,6 +105,12 @@ try {
     $isRunning = ($null -ne $status -and $null -ne $status.latest_run -and $status.latest_run.state -eq "running")
     Add-Result "Agente em execução" $isRunning ("execução #{0}, PID {1}" -f $status.latest_run.id, $status.latest_run.pid)
     Write-Processes "Processos do Sentinel:"
+    if ($null -ne $status -and $null -ne $status.previous_run) {
+        $labels = @{ clean = "parada limpa"; system_shutdown = "desligamento/logoff do Windows"; unclean = "encerramento inesperado"; failed = "falha"; interrupted = "interrompido" }
+        $prev = $status.previous_run
+        $label = if ($labels.ContainsKey("$($prev.exit_status)")) { $labels["$($prev.exit_status)"] } else { "$($prev.exit_status)" }
+        Write-Report "[INFO]  Execução anterior (#$($prev.id)) terminou por: $label"
+    }
     Write-Report ""
 
     # 2. Testes ----------------------------------------------------------------
@@ -134,8 +142,32 @@ try {
     }
     Write-Report ""
 
-    # 4. Encerramento forçado --------------------------------------------------
-    Write-Report "== 4. Detecção de encerramento forçado =="
+    # 4. Parada limpa ---------------------------------------------------------
+    Write-Report "== 4. Parada limpa (sentinel stop) =="
+    if ($null -ne $task -and $isRunning) {
+        $cleanRun = [int]$status.latest_run.id
+        $cleanPid = [int]$status.latest_run.pid
+        $out = (& $Py -m sentinel stop 2>&1 | Out-String).Trim()
+        $code = $LASTEXITCODE
+        $after = Get-Status
+        $stoppedClean = ($code -eq 0 -and $after.latest_run.id -eq $cleanRun -and $after.latest_run.exit_status -eq "clean")
+        Add-Result "Agente encerrou de forma limpa" $stoppedClean $out
+        Start-Sleep -Seconds 1
+        Add-Result "Processo do agente finalizado" ($null -eq (Get-Process -Id $cleanPid -ErrorAction SilentlyContinue)) "PID $cleanPid"
+        Start-ScheduledTask -TaskName $TaskName
+        $restarted = Wait-Until 60 {
+            $s = Get-Status
+            if ($null -ne $s -and $s.latest_run.id -gt $cleanRun -and $s.latest_run.state -eq "running") { $s }
+        }
+        Add-Result "Tarefa reiniciou o agente" ($null -ne $restarted) $(if ($restarted) { "execução #$($restarted.latest_run.id)" } else { "nenhuma nova execução em 60 s" })
+        if ($restarted) { $status = $restarted }
+    } else {
+        Add-Result "Parada limpa" $false "Pulado: tarefa inexistente ou agente parado."
+    }
+    Write-Report ""
+
+    # 5. Encerramento forçado --------------------------------------------------
+    Write-Report "== 5. Detecção de encerramento forçado =="
     if ($null -ne $task -and $isRunning) {
         $oldRun = [int]$status.latest_run.id
         $oldPid = [int]$status.latest_run.pid
@@ -170,8 +202,19 @@ try {
     }
     Write-Report ""
 
-    # 5. Recursos --------------------------------------------------------------
-    Write-Report "== 5. Consumo de recursos (amostra de 30 s) =="
+    # 6. API e segurança -------------------------------------------------------
+    Write-Report "== 6. API, segurança e tempo real =="
+    $checksRaw = & $Py -m sentinel selfcheck --json 2>$null | Out-String
+    try {
+        $checks = $checksRaw | ConvertFrom-Json
+        foreach ($c in $checks) { Add-Result $c.name ([bool]$c.ok) $c.detail }
+    } catch {
+        Add-Result "sentinel selfcheck" $false ("Saída inválida: " + $checksRaw.Trim())
+    }
+    Write-Report ""
+
+    # 7. Recursos --------------------------------------------------------------
+    Write-Report "== 7. Consumo de recursos (amostra de 30 s) =="
     $current = Get-Status
     $agentPid = if ($current -and $current.latest_run) { [int]$current.latest_run.pid } else { 0 }
     $p = if ($agentPid) { Get-Process -Id $agentPid -ErrorAction SilentlyContinue } else { $null }
@@ -192,7 +235,8 @@ try {
     $failed = @($Results | Where-Object { -not $_.Ok }).Count
     Write-Report "== Resumo =="
     Write-Report ("{0} verificações, {1} falha(s)." -f $Results.Count, $failed)
-    Write-Report "Verificação manual pendente: reinicie o PC, faça logon e execute status.bat."
+    Write-Report "Verificação manual pendente: reinicie o PC, faça logon e execute verificar.bat de novo -"
+    Write-Report "a linha [INFO] do passo 1 deve mostrar 'desligamento/logoff do Windows'."
     Write-Report "Relatório salvo em: $Report"
     Start-Process notepad.exe $Report
 }

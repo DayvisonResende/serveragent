@@ -1,16 +1,27 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Remove a tarefa agendada do Sentinel. Dados (data\, logs\, config\) são preservados.
+    Para o agente e remove a tarefa agendada. Dados (data\, logs\, config\) são preservados.
 
 .DESCRIPTION
-    Parar a tarefa encerra apenas o processo do Sentinel. Servidores monitorados
+    Parar o Sentinel encerra apenas o processo do Sentinel. Servidores monitorados
     não são afetados.
 #>
 [CmdletBinding()]
 param([string]$TaskName = "Sentinel Agent")
 
 $ErrorActionPreference = "Stop"
+$Root = Split-Path -Parent $PSScriptRoot
+$VenvPython = Join-Path $Root ".venv\Scripts\python.exe"
+
+if (Test-Path $VenvPython) {
+    Push-Location $Root
+    try {
+        & $VenvPython -m sentinel stop 2>&1 | Write-Host
+    } finally {
+        Pop-Location
+    }
+}
 
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($null -eq $task) {

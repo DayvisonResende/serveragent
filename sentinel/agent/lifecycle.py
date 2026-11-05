@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Any, Awaitable, Callable, Sequence
 
 from sentinel import __version__
@@ -25,16 +26,30 @@ from sentinel.core.context import AgentContext
 from sentinel.core.event_bus import WILDCARD, Event, EventBus, EventType, Severity
 from sentinel.core.exceptions import DatabaseError
 from sentinel.core.module_registry import Module, ModuleRegistry
+from sentinel.core.resource_manager import ResourceManager
 from sentinel.core.state_manager import AgentState, StateManager
 from sentinel.database.database import Database
 from sentinel.database.migrations import apply_migrations
-from sentinel.database.repositories import AgentRunRepository, AuditRepository, EventRepository
+from sentinel.database.repositories import AgentRunRepository, AuditRepository, AuthRepository, EventRepository
 from sentinel.oslayer.info import PlatformInfo, get_platform_info
 
 log = logging.getLogger(__name__)
 
 HEARTBEAT_JOB = "agent.heartbeat"
+RETENTION_JOB = "agent.retention"
+STOP_WATCH_JOB = "agent.stop_watch"
+STOP_REQUEST_FILE = "stop.request"
+DAY = 86_400.0
+
+STOP_REASONS = frozenset({"clean", "system_shutdown"})
 SOURCE = "agent"
+
+
+_STOP_MESSAGES = {
+    "clean": ("Sentinel encerrado", Severity.INFO),
+    "system_shutdown": ("Sentinel encerrado pelo desligamento do Windows", Severity.INFO),
+    "interrupted": ("Sentinel interrompido", Severity.WARNING),
+}
 
 
 class Agent:
@@ -58,6 +73,7 @@ class Agent:
             settings.agent.module_start_timeout_seconds,
             settings.agent.module_stop_timeout_seconds,
         )
+        self.resources = ResourceManager(settings.resources, self.scheduler, self.event_bus)
         for module in modules:
             self.registry.register(module)
 
@@ -66,14 +82,27 @@ class Agent:
         self._audit = AuditRepository(self.database)
         self._runs = AgentRunRepository(self.database)
         self.run_id: int | None = None
+        self.stop_reason = "clean"
+        self.stop_detail: str | None = None
+        self._stop_event: asyncio.Event | None = None
+        self.stop_request_path = settings.paths.data_dir / STOP_REQUEST_FILE
+
+    def request_stop(self, stop_event: asyncio.Event, reason: str = "clean", detail: str | None = None) -> None:
+        """Pede o encerramento. O primeiro motivo diferente de 'clean' prevalece."""
+        if reason not in STOP_REASONS:
+            raise ValueError(f"Motivo de parada inválido: {reason}")
+        if self.stop_reason == "clean":
+            self.stop_reason, self.stop_detail = reason, detail
+        stop_event.set()
 
     async def run(self, stop_event: asyncio.Event) -> None:
         """Inicia, aguarda ``stop_event`` e encerra. Exceções de inicialização são propagadas."""
         exit_status = "failed"
+        self._stop_event = stop_event
         try:
             await self._startup()
             await stop_event.wait()
-            exit_status = "clean"
+            exit_status = self.stop_reason
         except asyncio.CancelledError:
             exit_status = "interrupted"
             raise
@@ -126,9 +155,14 @@ class Agent:
             self.settings.agent.heartbeat_interval_seconds,
             essential=True,
         )
+        self.scheduler.add_job(RETENTION_JOB, self._apply_retention, DAY, timeout=300)
+        # Pedido de parada limpa via arquivo (python -m sentinel stop). Um pedido antigo,
+        # deixado por uma execução anterior, não pode derrubar esta.
+        self.stop_request_path.unlink(missing_ok=True)
+        self.scheduler.add_job(STOP_WATCH_JOB, self._check_stop_request, 1.0, essential=True, timeout=5)
         self.scheduler.start()
 
-        context = AgentContext(self.settings, self.event_bus, self.scheduler, self.database, platform)
+        context = AgentContext(self.settings, self.event_bus, self.scheduler, self.database, platform, self.resources)
         await self.registry.start_all(context)
 
         unavailable = self.registry.unavailable_modules
@@ -157,11 +191,14 @@ class Agent:
         await self._step("parar agendador", self.scheduler.stop)
 
         if self.run_id is not None:
+            title, severity = _STOP_MESSAGES.get(exit_status, ("Sentinel encerrado com falha", Severity.HIGH))
+            if exit_status == "system_shutdown" and self.stop_detail == "logoff":
+                title = "Sentinel encerrado pelo logoff do Windows"
             self._publish(
                 EventType.AGENT_STOPPED,
-                Severity.INFO if exit_status == "clean" else Severity.HIGH,
-                "Sentinel encerrado" if exit_status == "clean" else "Sentinel encerrado com falha",
-                metadata={"run_id": self.run_id, "exit_status": exit_status},
+                severity,
+                title,
+                metadata={"run_id": self.run_id, "exit_status": exit_status, "detail": self.stop_detail},
             )
             await self._step(
                 "auditar encerramento",
@@ -192,10 +229,23 @@ class Agent:
 
     # ---------------------------------------------------------------- tarefas
 
+    async def _check_stop_request(self) -> None:
+        if self._stop_event is None or not self.stop_request_path.exists():
+            return
+        self.stop_request_path.unlink(missing_ok=True)
+        log.info("Parada solicitada pelo comando 'sentinel stop'")
+        self.request_stop(self._stop_event, "clean", "stop_command")
+
     async def _heartbeat(self) -> None:
         if self.run_id is None:
             raise DatabaseError("Heartbeat sem execução registrada")
         await self._runs.heartbeat(self.run_id)
+
+    async def _apply_retention(self) -> None:
+        cutoff = time.time() - self.settings.retention.events_days * DAY
+        events = await self._events.purge_older_than(cutoff)
+        auth = await AuthRepository(self.database).purge_expired()
+        log.info("Retenção aplicada", extra={"events_removed": events, "auth_entries_removed": auth})
 
     async def _persist_event(self, event: Event) -> None:
         await self._events.add(event)

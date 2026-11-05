@@ -75,3 +75,12 @@ def configure_logging(settings: LoggingSettings, log_dir: Path) -> None:
         console = logging.StreamHandler(sys.stderr)
         console.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
         logger.addHandler(console)
+
+    # Servidor HTTP embutido: só avisos e erros, nos mesmos destinos.
+    uvicorn_logger = logging.getLogger("uvicorn")
+    uvicorn_logger.setLevel(logging.WARNING)
+    uvicorn_logger.propagate = False
+    for handler in list(uvicorn_logger.handlers):
+        uvicorn_logger.removeHandler(handler)
+    for handler in logger.handlers:
+        uvicorn_logger.addHandler(handler)

@@ -12,9 +12,10 @@ ambiente, conduzir o ciclo de vida e oferecer a CLI.
 | `scheduler.py` | Tarefas periódicas com timeout, backoff exponencial e fator de carga |
 | `logging_setup.py` | Logs JSON com rotação e mascaramento de segredos |
 | `health.py` | Relatório de saúde (estado, módulos, tarefas, barramento) |
+| `selfcheck.py` | Autoverificação do agente em execução (API, segurança, tempo real, gravação) |
 
 **Entradas:** `config/settings.yaml` (ou `--config` / `SENTINEL_CONFIG`).
-**Saídas:** `data/sentinel.db`, `logs/sentinel.log`, `logs/startup-error.log`, `data/sentinel.lock`.
+**Saídas:** `data/sentinel.db`, `logs/sentinel.log`, `logs/startup-error.log`, `data/sentinel.lock`, `data/stop.request` (transitório).
 **Dependências:** `core`, `database`, `oslayer`, pydantic, PyYAML.
 **Permissões:** nível 0 (observação). Não executa nenhuma ação no sistema.
 
@@ -29,7 +30,5 @@ ambiente, conduzir o ciclo de vida e oferecer a CLI.
 `tests/integration/test_agent_lifecycle.py`, `test_cli.py`.
 
 **Limitações:**
-- Não há comando `stop`. Parar pela tarefa agendada usa `TerminateProcess` e será
-  registrado como encerramento inesperado. Um endpoint de parada autenticado virá com a API.
-- `install.ps1`, a tarefa agendada e o tratamento de Ctrl+C no Windows ainda
-  não foram executados em um Windows real.
+- Parar pela tarefa agendada (ou pelo Gerenciador de Tarefas) usa `TerminateProcess` e é
+  registrado como encerramento inesperado — use `python -m sentinel stop` (parar.bat).

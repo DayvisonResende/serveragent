@@ -50,6 +50,23 @@ if (-not (Test-Path $VenvPython)) {
     Invoke-Checked $Python @("-m", "venv", $Venv) "Criação do ambiente virtual"
 }
 
+# Atualização: o agente em execução precisa parar antes, senão o pip não consegue
+# substituir arquivos em uso e o processo antigo continuaria com o código anterior.
+$existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if (Test-Path $VenvPython) {
+    Push-Location $Root
+    try {
+        & $VenvPython -m sentinel stop --timeout 15 2>&1 | Write-Host
+    } finally {
+        Pop-Location
+    }
+}
+if ($null -ne $existingTask -and (Get-ScheduledTask -TaskName $TaskName).State -eq "Running") {
+    Write-Host "O agente não parou pelo comando; encerrando a tarefa agendada."
+    Stop-ScheduledTask -TaskName $TaskName
+    Start-Sleep -Seconds 2
+}
+
 Write-Host "Instalando dependências ..."
 Invoke-Checked $VenvPython @("-m", "pip", "install", "--disable-pip-version-check", "-q", "-r", (Join-Path $Root "requirements.txt")) "Instalação de dependências"
 

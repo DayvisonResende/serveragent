@@ -51,11 +51,29 @@ Chaves desconhecidas em `settings.yaml` são rejeitadas e valores têm limites.
 Um erro de digitação impede a inicialização com mensagem clara, em vez de ser
 ignorado silenciosamente.
 
+## D7 — CPU calculada pelo próprio coletor
+
+`psutil.cpu_percent(None)` guarda estado interno compartilhado; chamado a partir
+das threads de coleta, produziu leituras alternadas de 0%. O coletor calcula o
+uso pela diferença entre duas leituras de `cpu_times()` que ele mesmo guarda.
+
+## D8 — Login por link de uso único, sem senha
+
+Para uso local, uma senha só adicionaria um segredo a ser esquecido ou reutilizado.
+`abrir-dashboard.bat` grava no banco o hash de um código aleatório de 256 bits,
+válido por 2 minutos e uma única vez, e abre o navegador. Só quem consegue
+escrever na pasta do Sentinel consegue entrar. O acesso remoto (fase futura)
+acrescentará senha e HTTPS.
+
+## D9 — Parada limpa por arquivo de pedido
+
+`python -m sentinel stop` cria `data/stop.request`; o agente verifica a cada
+segundo e encerra limpo. Assim instalação, atualização e desinstalação não geram
+falsos "encerramentos inesperados". O desligamento do Windows é tratado por uma
+janela oculta (`oslayer/shutdown_listener.py`) e registrado como `system_shutdown`.
+
 ## Decisões futuras já identificadas
 
-- **Fase 2 — API local:** exigir token mesmo em `127.0.0.1` e checar `Origin`,
-  porque qualquer página aberta no navegador consegue enviar requisições para
-  `localhost` (CSRF).
 - **Fase 3 — Servidores sobrevivendo ao Sentinel (critério 12 do MVP):** iniciar
   processos com `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP |
   CREATE_BREAKAWAY_FROM_JOB`, pois a tarefa agendada roda num *job object* que

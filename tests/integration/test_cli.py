@@ -15,8 +15,17 @@ from sentinel.agent.config import PROJECT_ROOT
 from sentinel.agent.main import EXIT_CONFIG, EXIT_LOCKED, EXIT_OK, main
 
 
+def free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def make_config(tmp_path: Path) -> Path:
     cfg = {
+        "api": {"port": free_port()},
         "paths": {
             "data_dir": str(tmp_path / "data"),
             "log_dir": str(tmp_path / "logs"),
@@ -34,7 +43,7 @@ def test_init_prepares_database_and_is_idempotent(tmp_path, capsys):
     config = make_config(tmp_path)
     assert main(["--config", str(config), "init"]) == EXIT_OK
     out = capsys.readouterr().out
-    assert "existente" in out and "0001" in out and "Integridade  : ok" in out
+    assert "existente" in out and "0001, 0002" in out and "Integridade  : ok" in out
     assert (tmp_path / "data" / "sentinel.db").exists()
     assert main(["--config", str(config), "init"]) == EXIT_OK
     assert "nenhuma pendente" in capsys.readouterr().out
@@ -85,3 +94,28 @@ def test_real_agent_process_runs_refuses_second_instance_and_stops_cleanly(tmp_p
     out = capsys.readouterr().out
     assert "parado (clean)" in out
     assert "Sentinel encerrado" in out
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="agente em subprocesso encerrado por sinal")
+def test_stop_command_stops_agent_cleanly_and_dashboard_link(tmp_path, capsys):
+    config = make_config(tmp_path)
+    assert main(["--config", str(config), "stop"]) == EXIT_OK  # sem banco: nada a fazer
+    env = {**os.environ, "PYTHONPATH": str(PROJECT_ROOT)}
+    proc = subprocess.Popen([sys.executable, "-m", "sentinel", "--config", str(config), "run"], cwd=tmp_path, env=env)
+    try:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if (tmp_path / "data" / "sentinel.db").exists() and main(["--config", str(config), "status"]) == EXIT_OK:
+                if "em execução" in capsys.readouterr().out:
+                    break
+            time.sleep(0.2)
+        assert main(["--config", str(config), "dashboard", "--no-browser"]) == EXIT_OK
+        assert "/login?code=" in capsys.readouterr().out
+        assert main(["--config", str(config), "stop"]) == EXIT_OK
+        assert "Agente encerrado (clean)" in capsys.readouterr().out
+        assert proc.wait(timeout=10) == EXIT_OK
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    assert main(["--config", str(config), "dashboard", "--no-browser"]) == 1  # agente parado
+    assert not (tmp_path / "data" / "stop.request").exists()

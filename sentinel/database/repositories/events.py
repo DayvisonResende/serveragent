@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from sentinel.core.clock import to_iso
@@ -44,3 +45,7 @@ class EventRepository:
     async def count(self, event_type: str) -> int:
         row = await self._db.fetch_one("SELECT COUNT(*) AS n FROM events WHERE event_type = ?", (event_type,))
         return int(row["n"]) if row else 0
+
+    async def purge_older_than(self, cutoff_epoch: float) -> int:
+        cutoff = to_iso(datetime.fromtimestamp(cutoff_epoch, timezone.utc))
+        return await self._db.run(lambda c: c.execute("DELETE FROM events WHERE timestamp < ?", (cutoff,)).rowcount)
