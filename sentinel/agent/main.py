@@ -16,6 +16,7 @@ import sys
 import traceback
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from sentinel import __version__
 from sentinel.agent import bootstrap
@@ -23,6 +24,7 @@ from sentinel.agent.config import PROJECT_ROOT, Settings, load_settings, resolve
 from sentinel.agent.lifecycle import Agent
 from sentinel.agent.logging_setup import configure_logging
 from sentinel.core.clock import utc_now
+from sentinel.core.event_bus import EventType
 from sentinel.core.exceptions import ConfigurationError, DatabaseError, InstanceLockError, SentinelError
 from sentinel.database.database import Database
 from sentinel.database.repositories import AgentRunRepository, EventRepository
@@ -49,7 +51,8 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init", help="prepara configuração, diretórios e banco de dados")
     commands.add_parser("run", help="executa o agente em primeiro plano")
-    commands.add_parser("status", help="mostra a última execução e os eventos recentes")
+    status_parser = commands.add_parser("status", help="mostra a última execução e os eventos recentes")
+    status_parser.add_argument("--json", action="store_true", help="saída em JSON (ASCII), para scripts")
     commands.add_parser("check-config", help="valida e exibe a configuração efetiva")
     args = parser.parse_args(argv)
 
@@ -62,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "run":
             return cmd_run(settings)
         if args.command == "status":
-            return cmd_status(settings)
+            return cmd_status(settings, as_json=args.json)
         if args.command == "check-config":
             print(json.dumps(settings.model_dump(mode="json"), indent=2, ensure_ascii=False))
             return EXIT_OK
@@ -117,44 +120,70 @@ async def _run_agent(settings: Settings) -> None:
     await agent.run(stop)
 
 
-def cmd_status(settings: Settings) -> int:
+def cmd_status(settings: Settings, as_json: bool = False) -> int:
     if not settings.paths.database_file.exists():
-        print("Banco de dados não encontrado. Execute 'python -m sentinel init'.")
+        if as_json:
+            print(json.dumps({"initialized": False}))
+        else:
+            print("Banco de dados não encontrado. Execute 'python -m sentinel init'.")
         return EXIT_ERROR
-    latest, events = asyncio.run(_read_status(settings))
+    data = asyncio.run(_read_status(settings))
+    if as_json:
+        # ensure_ascii evita problemas de codificação no console do Windows.
+        print(json.dumps(data, ensure_ascii=True))
+        return EXIT_OK
 
-    if latest is None:
+    run = data["latest_run"]
+    if run is None:
         print("Nenhuma execução do agente registrada.")
     else:
-        heartbeat_age = (utc_now() - datetime.fromisoformat(latest["last_heartbeat"])).total_seconds()
-        if latest["stopped_at"]:
-            state = f"parado ({latest['exit_status']}) em {latest['stopped_at']}"
-        elif heartbeat_age <= settings.agent.heartbeat_interval_seconds * 2.5:
-            state = "em execução"
-        else:
-            state = f"sem sinal de vida há {heartbeat_age:.0f}s (possível encerramento inesperado)"
-        print(f"Execução #{latest['id']} — PID {latest['pid']} — versão {latest['version']}")
+        age = run["heartbeat_age_seconds"]
+        state = {
+            "running": "em execução",
+            "stopped": f"parado ({run['exit_status']}) em {run['stopped_at']}",
+            "stale": f"sem sinal de vida há {age:.0f}s (possível encerramento inesperado)",
+        }[run["state"]]
+        print(f"Execução #{run['id']} — PID {run['pid']} — versão {run['version']}")
         print(f"  Estado          : {state}")
-        print(f"  Iniciado em     : {latest['started_at']}")
-        print(f"  Último heartbeat: {latest['last_heartbeat']} (há {heartbeat_age:.0f}s)")
+        print(f"  Iniciado em     : {run['started_at']}")
+        print(f"  Último heartbeat: {run['last_heartbeat']} (há {age:.0f}s)")
 
     print("\nEventos recentes:")
-    if not events:
+    if not data["recent_events"]:
         print("  (nenhum)")
-    for event in events:
+    for event in data["recent_events"]:
         print(f"  {event['timestamp']}  [{event['severity']:>8}]  {event['title']}")
         if event["description"]:
             print(f"      {event['description']}")
     return EXIT_OK
 
 
-async def _read_status(settings: Settings) -> tuple[dict | None, list[dict]]:
+async def _read_status(settings: Settings) -> dict[str, Any]:
     db = Database(settings.paths.database_file, settings.database.busy_timeout_ms)
     await db.open()
     try:
-        return await AgentRunRepository(db).latest(), await EventRepository(db).recent(10)
+        run = await AgentRunRepository(db).latest()
+        events_repo = EventRepository(db)
+        recent = await events_repo.recent(10)
+        unclean = await events_repo.count(EventType.AGENT_UNCLEAN_SHUTDOWN)
     finally:
         await db.close()
+
+    if run is not None:
+        age = (utc_now() - datetime.fromisoformat(run["last_heartbeat"])).total_seconds()
+        run["heartbeat_age_seconds"] = round(age, 1)
+        if run["stopped_at"]:
+            run["state"] = "stopped"
+        elif age <= settings.agent.heartbeat_interval_seconds * 2.5:
+            run["state"] = "running"
+        else:
+            run["state"] = "stale"
+    return {
+        "initialized": True,
+        "latest_run": run,
+        "recent_events": recent,
+        "unclean_shutdown_events": unclean,
+    }
 
 
 def _fail(message: str, code: int, log_dir: Path) -> int:

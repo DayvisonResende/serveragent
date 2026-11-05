@@ -2,10 +2,14 @@
 quebrados, detecta encerramentos inesperados e encerra de forma limpa."""
 
 import asyncio
+import contextlib
 import dataclasses
+import io
+import json
 import sqlite3
 
 from sentinel.agent.lifecycle import HEARTBEAT_JOB, Agent
+from sentinel.agent.main import cmd_status
 from sentinel.core.event_bus import EventType
 from sentinel.core.module_registry import Module
 from sentinel.core.state_manager import AgentState
@@ -102,6 +106,14 @@ def test_previous_crash_is_reported_on_next_start(settings, platform_info):
 
     unclean = query(settings, "SELECT * FROM events WHERE event_type = ?", (EventType.AGENT_UNCLEAN_SHUTDOWN,))
     assert len(unclean) == 1 and "4242" in unclean[0]["description"]
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        cmd_status(settings, as_json=True)
+    data = json.loads(buf.getvalue())
+    assert data["unclean_shutdown_events"] == 1
+    assert data["latest_run"]["state"] == "stopped"
+    assert buf.getvalue().isascii()
     crashed = query(settings, "SELECT exit_status FROM agent_runs WHERE pid = 4242")
     assert crashed == [{"exit_status": "unclean"}]
 

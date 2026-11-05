@@ -40,3 +40,7 @@ class EventRepository:
         for row in rows:
             row["metadata"] = json.loads(row.pop("metadata_json"))
         return rows
+
+    async def count(self, event_type: str) -> int:
+        row = await self._db.fetch_one("SELECT COUNT(*) AS n FROM events WHERE event_type = ?", (event_type,))
+        return int(row["n"]) if row else 0
