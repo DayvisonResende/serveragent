@@ -87,6 +87,27 @@ nova sessão (POSIX). Se o Windows recusar, a operação avisa explicitamente qu
 servidor pode morrer junto com o Sentinel — nunca em silêncio. O `verificar.bat`
 testa isso encerrando o agente à força com um servidor de teste rodando.
 
+## D12 — Reinício automático como política explícita e limitada
+
+O PRD exige aprovação para reiniciar, "salvo política específica e limitada
+autorizada pelo usuário". A política é por servidor, vem desligada, tem limite de
+tentativas por janela e espera crescente, reconfere o estado antes de agir e
+desiste avisando. Aprender que reiniciar resolve (Fase 7) nunca liga a política
+sozinho (PRD 10.9).
+
+## D13 — Notificações por Telegram com token cifrado
+
+Telegram foi o primeiro canal por ser gratuito, chegar ao celular e não exigir
+servidor de e-mail. O token fica cifrado com DPAPI e nunca sai pela API; a
+descoberta do chat usa as mensagens enviadas ao bot, sem digitar IDs.
+
+## D14 — Inicialização sem logon
+
+`iniciar-com-windows.bat` registra a tarefa como "executar estando o usuário
+conectado ou não" com gatilho na inicialização. A senha fica com o Agendador de
+Tarefas; administrador é usado só para registrar; o agente roda limitado. O
+instalador preserva esse modo nas atualizações.
+
 ## Decisões futuras já identificadas
 
 - **Fase 4 — Aprovações:** vincular cada aprovação a um hash de

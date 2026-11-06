@@ -51,6 +51,21 @@ Conjunto fechado: `server_start`, `server_stop`, `server_restart`. Não existe e
 Nesta fase quem autoriza é o usuário autenticado (com confirmação no dashboard ou
 na CLI). **Na Fase 4 as operações passam pelo sistema de aprovações.**
 
+## Reinício automático (opcional, por servidor)
+
+Desligado por padrão. Ao ligar, o usuário autoriza o Sentinel a reiniciar aquele
+servidor sem perguntar (PRD 6.5: "política específica e limitada"). Fluxo do PRD 6.6:
+
+1. queda detectada → incidente aberto;
+2. espera a 1ª tentativa (padrão 10 s) e reconfere: se voltou sozinho, foi parado
+   pelo usuário ou há outra operação, não faz nada;
+3. reinicia (auditado como `sentinel:politica-reinicio`) e verifica a saúde;
+4. falhou → nova tentativa com espera dobrada (máx. 5 min);
+5. esgotado o limite (padrão 3 em 60 min) → para de tentar e avisa (crítico).
+
+Paradas feitas pelo usuário nunca disparam o reinício. O limite geral de
+operações por servidor continua valendo.
+
 ## Scripts .bat/.cmd
 
 Aceitos como executável de servidores gerenciados (Windows). Como passam pelo

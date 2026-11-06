@@ -90,6 +90,11 @@ def run_selfcheck(settings: Settings) -> list[Check]:
         checks.append(Check("Status com dados reais", ok, f"CPU {cpu}%, coleta há {current.get('age_seconds')}s"))
         machine = data.get("machine") or {}
         checks.append(Check("Processador identificado", bool(machine.get("cpu_model")), machine.get("cpu_model") or "não identificado"))
+        jobs = [j for j in (data.get("agent") or {}).get("jobs", []) if j.get("load_share") is not None]
+        jobs.sort(key=lambda j: j["load_share"], reverse=True)
+        if jobs:
+            top = ", ".join(f"{j['name']} {j['avg_duration_ms']:.0f} ms/{j['effective_interval_seconds']:.0f} s" for j in jobs[:4])
+            checks.append(Check("Custo das tarefas (informativo)", True, top))
         temp = data.get("temperature") or {}
         checks.append(Check("Temperatura (informativo)", True,
                             "sensores disponíveis" if temp.get("available") else (temp.get("message") or "não coletada ainda")))

@@ -38,6 +38,8 @@ Atalhos de dois cliques na raiz do projeto:
 | `parar.bat` | para o agente de forma limpa |
 | `iniciar.bat` | roda o agente numa janela (depuração) |
 | `instalar.bat` / `desinstalar.bat` | instala/atualiza ou remove a tarefa agendada |
+| `ligar.bat` | liga o Sentinel agora (pela tarefa agendada) |
+| `iniciar-com-windows.bat` | faz o Sentinel subir com o Windows, sem logon (pede a senha da conta) |
 | `investigar-processo.bat` | relatório **somente leitura** sobre um executável suspeito (assinatura, hash, origem, inicialização automática) |
 
 ## Uso

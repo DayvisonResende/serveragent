@@ -143,16 +143,18 @@ def build_agent(settings: Settings) -> Agent:
     """Raiz de composição: cria o agente e conecta os módulos."""
     from sentinel.api.server import ApiModule
     from sentinel.modules.monitor import MetricsStore, MonitorModule
+    from sentinel.modules.notifications.manager import NotificationsModule
     from sentinel.modules.servers.manager import ServersModule
 
     m = settings.monitoring
     store = MetricsStore(live_capacity=int(m.live_history_seconds / m.fast_interval_seconds) + 1)
     monitor = MonitorModule(store)
     servers = ServersModule(store)
-    agent = Agent(settings, modules=[monitor, servers])
+    notifications = NotificationsModule()
+    agent = Agent(settings, modules=[monitor, servers, notifications])
     if settings.api.enabled:
         agent.registry.register(
-            ApiModule(store, agent.health_report, lambda: monitor.alerts.active() if monitor.alerts else [], servers)
+            ApiModule(store, agent.health_report, lambda: monitor.alerts.active() if monitor.alerts else [], servers, notifications)
         )
     return agent
 

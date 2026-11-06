@@ -18,7 +18,8 @@
 param(
     [string]$Python = "python",
     [string]$TaskName = "Sentinel Agent",
-    [switch]$NoTask
+    [switch]$NoTask,
+    [switch]$ModoLogon  # força voltar ao modo "iniciar no logon" (desfaz iniciar-com-windows)
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,6 +94,16 @@ try {
 
 if ($NoTask) {
     Write-Host "Instalação concluída sem tarefa agendada. Inicie manualmente com scripts\start.ps1."
+    return
+}
+
+# Modo "iniciar com o Windows, sem logon" (iniciar-com-windows.bat) é preservado nas
+# atualizações: recriar a tarefa aqui exigiria a senha de novo e voltaria ao modo logon.
+$current = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($null -ne $current -and $current.Principal.LogonType -eq "Password" -and -not $ModoLogon) {
+    Start-ScheduledTask -TaskName $TaskName
+    Write-Host "Tarefa '$TaskName' mantida no modo 'iniciar com o Windows, sem logon' e reiniciada."
+    Write-Host "Verifique com:  .venv\Scripts\python.exe -m sentinel status"
     return
 }
 

@@ -53,6 +53,10 @@ async def status(request: Request) -> dict[str, Any]:
             "unavailable_modules": health["unavailable_modules"],
             "failing_jobs": health["failing_jobs"],
             "websocket_clients": deps.hub.client_count,
+            "jobs": [
+                {k: j[k] for k in ("name", "runs", "avg_duration_ms", "load_share", "effective_interval_seconds", "consecutive_failures")}
+                for j in health.get("jobs", [])
+            ],
         },
         "resources": deps.resources.snapshot(),
         "machine": machine,

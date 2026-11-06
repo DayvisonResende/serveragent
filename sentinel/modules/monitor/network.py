@@ -59,15 +59,27 @@ class NetworkCollector:
     interface fica ``None`` nessa coleta em vez de exibir um valor falso.
     """
 
+    # Endereços e estado das placas mudam raramente e são caros de ler no Windows
+    # (GetAdaptersAddresses); os contadores de bytes são lidos a cada coleta.
+    INTERFACE_INFO_TTL = 60.0
+
     def __init__(self) -> None:
         self._last: dict[str, tuple[int, int]] = {}
         self._last_time: float | None = None
+        self._if_cache: tuple[float, dict, dict] | None = None
+
+    def _interface_info(self, now: float) -> tuple[dict, dict]:
+        if self._if_cache is None or now - self._if_cache[0] > self.INTERFACE_INFO_TTL:
+            self._if_cache = (now, psutil.net_if_addrs(), psutil.net_if_stats())
+        return self._if_cache[1], self._if_cache[2]
 
     def collect(self) -> NetworkSample:
         now = time.monotonic()
         counters = psutil.net_io_counters(pernic=True)
-        addrs = psutil.net_if_addrs()
-        stats = psutil.net_if_stats()
+        addrs, stats = self._interface_info(now)
+        if set(counters) - set(addrs):  # placa nova (ex.: VPN conectou): atualiza já
+            self._if_cache = None
+            addrs, stats = self._interface_info(now)
         elapsed = (now - self._last_time) if self._last_time is not None else None
 
         interfaces: list[InterfaceSample] = []

@@ -42,6 +42,8 @@ ALLOWED_OPERATIONS = frozenset({"server_start", "server_stop", "server_restart"}
 EVENT_STATE = "server.state_changed"
 EVENT_RECOVERED = "server.recovered"
 EVENT_OPERATION = "server.operation"
+EVENT_AUTO_RESTART = "server.auto_restart"
+AUTO_ACTOR = "sentinel:politica-reinicio"
 
 STATE_LABELS = {
     ServerState.ONLINE: "online",
@@ -86,6 +88,9 @@ class ServerStatus:
     port_owners: list[dict[str, Any]] | None = None  # None = porta livre
     last_operation: dict[str, Any] | None = None
     warning: str | None = None
+    auto_restarts: list[float] = field(default_factory=list)  # instantes (epoch) das tentativas automáticas
+    auto_restart_pending: str | None = None  # descrição da próxima tentativa agendada
+    auto_restart_exhausted: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -111,6 +116,7 @@ class ServersModule(Module):
         self._fresh = ProcessCollector()
         self._children: dict[int, Any] = {}  # PID → Popen dos servidores iniciados por nós
         self._jobs: list[str] = []
+        self._recovery: dict[int, asyncio.Task[None]] = {}
 
     # ------------------------------------------------------------ ciclo de vida
 
@@ -128,6 +134,14 @@ class ServersModule(Module):
         # Encerrar o Sentinel NUNCA encerra servidores (PRD 2.4): apenas paramos de observar.
         if self._ctx is None:
             return
+        for task in self._recovery.values():
+            task.cancel()
+        for task in list(self._recovery.values()):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._recovery.clear()
         for name in self._jobs:
             try:
                 await self._ctx.scheduler.remove_job(name)
@@ -258,6 +272,8 @@ class ServersModule(Module):
         }
         await self._transition(record, status, result.state, status.last_check["error"])
         await self._repo.add_check(record.id, status.last_check)
+        if status.state in BAD_STATES and not status.planned_down:
+            self._consider_recovery(record, status, status.state)  # inclui servidores já fora do ar ao iniciar o agente
 
     def _apply_match(self, status: ServerStatus, match: MatchResult) -> None:
         status.pids, status.main_pid = match.pids, match.main_pid
@@ -289,7 +305,9 @@ class ServersModule(Module):
             else:
                 await self._repo.append_incident(status.incident_id, entry)
             self._publish(EVENT_STATE, severity, title, error or "", record, {"from": old.value, "to": new.value, "incident_id": status.incident_id})
+            self._consider_recovery(record, status, new)
         elif new is ServerState.ONLINE and status.incident_id is not None:
+            status.auto_restart_exhausted = False
             duration = await self._repo.close_incident(status.incident_id, "recuperado", entry)
             incident, status.incident_id = status.incident_id, None
             self._publish(
@@ -301,6 +319,73 @@ class ServersModule(Module):
             status.incident_id = None
 
     # -------------------------------------------------------------- operações
+
+    # ------------------------------------------------------ reinício automático
+
+    def _consider_recovery(self, record: ServerRecord, status: ServerStatus, state: ServerState) -> None:
+        """PRD 6.6: com política autorizada, agenda uma tentativa de recuperação (nunca imediata)."""
+        policy = record.restart_policy
+        if not policy.enabled or record.management != "managed" or state.value not in policy.on_states:
+            return
+        if record.id in self._recovery and not self._recovery[record.id].done():
+            return  # já há tentativa agendada
+        window_start = time.time() - policy.window_minutes * 60
+        status.auto_restarts = [t for t in status.auto_restarts if t >= window_start]
+        if len(status.auto_restarts) >= policy.max_attempts:
+            if not status.auto_restart_exhausted:
+                status.auto_restart_exhausted = True
+                self._publish(
+                    EVENT_AUTO_RESTART, Severity.CRITICAL,
+                    f"Reinício automático de '{record.name}' esgotado",
+                    f"{policy.max_attempts} tentativa(s) em {policy.window_minutes} min sem recuperação. "
+                    "O Sentinel parou de tentar: é preciso intervenção.",
+                    record, {"attempts": len(status.auto_restarts)},
+                )
+            return
+        attempt = len(status.auto_restarts) + 1
+        delay = policy.delay_for(attempt)
+        status.auto_restart_pending = f"tentativa {attempt}/{policy.max_attempts} em {delay:.0f} s"
+        self._recovery[record.id] = asyncio.create_task(
+            self._recover(record.id, attempt, delay), name=f"sentinel-recovery-{record.id}"
+        )
+
+    async def _recover(self, server_id: int, attempt: int, delay: float) -> None:
+        assert self._repo is not None
+        try:
+            await asyncio.sleep(delay)
+            record = self._servers.get(server_id)
+            status = self._status.get(server_id)
+            if record is None or status is None or not record.restart_policy.enabled:
+                return
+            status.auto_restart_pending = None
+            if status.state not in BAD_STATES or status.planned_down or status.operation:
+                return  # voltou sozinho, foi parado pelo usuário ou há outra operação
+            policy = record.restart_policy
+            status.auto_restarts.append(time.time())
+            reason = f"política de reinício automático (tentativa {attempt}/{policy.max_attempts}, estado {status.state.value})"
+            if status.incident_id is not None:
+                await self._repo.append_incident(status.incident_id, {"at": to_iso(utc_now()), "state": "auto_restart", "detail": reason})
+            try:
+                result = await self.execute("server_restart", server_id, AUTO_ACTOR, reason)
+            except OperationError as exc:  # recusa (ex.: limite de frequência)
+                result = {"ok": False, "message": str(exc)}
+            self._publish(
+                EVENT_AUTO_RESTART, Severity.INFO if result["ok"] else Severity.HIGH,
+                f"Reinício automático de '{record.name}': {'recuperado' if result['ok'] else 'falhou'}",
+                f"Tentativa {attempt}/{policy.max_attempts}. {result['message']}", record,
+                {"attempt": attempt, "ok": result["ok"]},
+            )
+            if result["ok"]:
+                status.auto_restart_exhausted = False
+            else:
+                self._recovery.pop(server_id, None)
+                current = self._status.get(server_id)
+                if current is not None and current.state in BAD_STATES:
+                    self._consider_recovery(record, current, current.state)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Falha na recuperação automática", extra={"server_id": server_id})
 
     async def execute(self, operation: str, server_id: int, actor: str, reason: str | None = None) -> dict[str, Any]:
         """Executa uma operação permitida, com validação, limite de frequência e auditoria."""

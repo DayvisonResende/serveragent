@@ -40,6 +40,14 @@ function portNote(s, st) {
   return h("p", { class: "secondary small", text: `Porta ${s.port} em uso por ${names || "um processo sem acesso"}.` });
 }
 
+function policyNote(s, st) {
+  const rp = s.restart_policy;
+  if (!rp?.enabled) return null;
+  if (st.auto_restart_exhausted) return h("p", { class: "secondary small", text: `Reinício automático esgotado (${rp.max_attempts} tentativas): precisa de intervenção.` });
+  if (st.auto_restart_pending) return h("p", { class: "secondary small", text: `Reinício automático agendado: ${st.auto_restart_pending}.` });
+  return h("p", { class: "muted small", text: `Reinício automático ativo: até ${rp.max_attempts} tentativas em ${rp.window_minutes} min.` });
+}
+
 function message(text, kind = "info") {
   return h("div", { class: `form-message form-message-${kind}`, role: kind === "error" ? "alert" : "status", text });
 }
@@ -109,6 +117,7 @@ function serverCard(item, refresh) {
       : null,
     st.last_check?.error && st.state !== "online" ? h("p", { class: "secondary small", text: st.last_check.error }) : null,
     portNote(s, st),
+    policyNote(s, st),
     st.warning ? h("p", { class: "secondary small", text: `Atenção: ${st.warning}` }) : null,
     actionButtons(s, st, refresh));
 }
@@ -178,6 +187,7 @@ export async function serverFormPage(view, { id, pid } = {}) {
     hint = `Sugestão a partir do processo ${pid}${cand.listening_ports.length ? ` (portas: ${cand.listening_ports.join(", ")})` : " (nenhuma porta escutando)"}. Confira antes de salvar.`;
   }
   const hc = spec.health_check || {};
+  const rp = { enabled: false, on_states: ["offline"], max_attempts: 3, window_minutes: 60, initial_delay_seconds: 10, ...(spec.restart_policy || {}) };
   const pm = spec.process_match || {};
   const feedback = h("div");
   const scriptHint = h("p", { class: "form-message form-wide small", hidden: !/\.(bat|cmd)$/i.test(spec.executable || ""),
@@ -216,6 +226,17 @@ export async function serverFormPage(view, { id, pid } = {}) {
       input("match_name", "Nome do processo", pm.name),
       input("match_cmd", "Linha de comando contém (separe por ;)", (pm.cmdline_contains || []).join(";")),
       h("label", { class: "check" }, h("input", { type: "checkbox", name: "match_port", checked: pm.port_owner || null }), " Exigir que o processo seja o dono da porta")),
+    h("fieldset", { class: "form-wide policy" },
+      h("legend", { text: "Reinício automático (somente servidores gerenciados)" }),
+      h("label", { class: "check" }, h("input", { type: "checkbox", name: "rp_enabled", checked: rp.enabled || null }),
+        " Reiniciar automaticamente quando cair — você autoriza o Sentinel a fazer isso sem perguntar, dentro dos limites abaixo"),
+      h("div", { class: "form-grid" },
+        h("label", { class: "check" }, h("input", { type: "checkbox", name: "rp_offline", checked: rp.on_states.includes("offline") || null }), " Quando ficar offline (processo encerrou)"),
+        h("label", { class: "check" }, h("input", { type: "checkbox", name: "rp_unresponsive", checked: rp.on_states.includes("unresponsive") || null }), " Quando ficar sem resposta (processo travado)"),
+        input("rp_max", "Máximo de tentativas", rp.max_attempts, { type: "number", min: 1, max: 10 }),
+        input("rp_window", "Dentro de (minutos)", rp.window_minutes, { type: "number", min: 5, max: 1440 }),
+        input("rp_delay", "Esperar antes da 1ª tentativa (s)", rp.initial_delay_seconds, { type: "number", min: 0, max: 600 }, "A espera dobra a cada nova tentativa (máx. 5 min).")),
+      h("small", { class: "muted", text: "Esgotadas as tentativas, o Sentinel para de tentar e avisa (crítico). Paradas feitas por você nunca disparam o reinício." })),
     h("label", { class: "check form-wide" }, h("input", { type: "checkbox", name: "enabled", checked: spec.enabled !== false || null }), " Monitoramento ativado"),
     h("div", { class: "actions form-wide" },
       h("button", { type: "submit", class: "btn btn-primary", text: id ? "Salvar alterações" : "Cadastrar" }),
@@ -248,7 +269,15 @@ export async function serverFormPage(view, { id, pid } = {}) {
       criticality: text("criticality"),
       startup_grace_seconds: num("startup_grace_seconds") ?? 30,
       enabled: f.get("enabled") === "on",
+      restart_policy: {
+        enabled: f.get("rp_enabled") === "on",
+        on_states: [f.get("rp_offline") === "on" ? "offline" : null, f.get("rp_unresponsive") === "on" ? "unresponsive" : null].filter(Boolean),
+        max_attempts: num("rp_max") ?? 3,
+        window_minutes: num("rp_window") ?? 60,
+        initial_delay_seconds: num("rp_delay") ?? 10,
+      },
     };
+    if (!payload.restart_policy.on_states.length) payload.restart_policy.on_states = ["offline"];
     try {
       const saved = await sendJSON(id ? "PUT" : "POST", id ? `/api/v1/servers/${id}` : "/api/v1/servers", payload);
       location.hash = `#/servidores/${saved.server.id}`;

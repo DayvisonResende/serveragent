@@ -35,6 +35,7 @@ class JobStats:
     last_success_at: datetime | None = None
     last_error: str | None = None
     last_duration_seconds: float | None = None
+    total_duration_seconds: float = 0.0
 
 
 @dataclass
@@ -138,6 +139,10 @@ class Scheduler:
                     "last_success_at": to_iso(s.last_success_at) if s.last_success_at else None,
                     "last_error": s.last_error,
                     "last_duration_seconds": s.last_duration_seconds,
+                    # média em regime: a 1ª execução (aquecimento, ex.: janela inicial de CPU) não entra
+                    "avg_duration_ms": round(s.total_duration_seconds / (s.runs - 1) * 1000, 1) if s.runs > 1 else None,
+                    # fração aproximada de um núcleo ocupada pela tarefa (duração média / intervalo)
+                    "load_share": round(s.total_duration_seconds / (s.runs - 1) / self._effective_interval(job), 4) if s.runs > 1 else None,
                 }
             )
         return out
@@ -177,7 +182,10 @@ class Scheduler:
             stats.consecutive_failures = 0
             stats.last_success_at = utc_now()
         finally:
-            stats.last_duration_seconds = round(time.monotonic() - started, 4)
+            elapsed = time.monotonic() - started
+            stats.last_duration_seconds = round(elapsed, 4)
+            if stats.runs > 1:
+                stats.total_duration_seconds += elapsed
 
     @staticmethod
     def _record_failure(job: Job, message: str) -> None:

@@ -114,6 +114,28 @@ class ProcessMatch(BaseModel):
         return not (self.exe_path or self.name or self.cmdline_contains or self.port_owner)
 
 
+class RestartPolicy(BaseModel):
+    """Reinício automático (PRD 6.5/6.6): autorização explícita e limitada do usuário.
+
+    Desligado por padrão. Tenta no máximo ``max_attempts`` vezes dentro de
+    ``window_minutes``, com espera crescente; esgotado o limite, desiste e avisa.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    on_states: list[Literal["offline", "unresponsive"]] = Field(default_factory=lambda: ["offline"], min_length=1)
+    max_attempts: int = Field(3, ge=1, le=10)
+    window_minutes: int = Field(60, ge=5, le=1440)
+    initial_delay_seconds: int = Field(10, ge=0, le=600)
+    backoff_multiplier: float = Field(2.0, ge=1.0, le=5.0)
+    max_delay_seconds: int = Field(300, ge=10, le=3600)
+
+    def delay_for(self, attempt: int) -> float:
+        """Espera antes da tentativa ``attempt`` (1, 2, 3…)."""
+        return min(self.initial_delay_seconds * self.backoff_multiplier ** (attempt - 1), self.max_delay_seconds)
+
+
 class ServerSpec(BaseModel):
     """Dados de cadastro/alteração recebidos do dashboard ou da CLI."""
 
@@ -134,6 +156,7 @@ class ServerSpec(BaseModel):
     criticality: Criticality = "medium"
     startup_grace_seconds: int = Field(30, ge=3, le=600)
     enabled: bool = True
+    restart_policy: RestartPolicy = RestartPolicy()
 
     @field_validator("name")
     @classmethod
@@ -167,6 +190,8 @@ class ServerSpec(BaseModel):
                 validate_script(self.executable, self.arguments)
             if self.working_directory and not Path(self.working_directory).is_absolute():
                 raise ValueError("diretório de trabalho deve ser um caminho absoluto")
+        if self.restart_policy.enabled and self.management != "managed":
+            raise ValueError("reinício automático só é possível em servidores gerenciados")
         if self.health_check.type in ("port", "tcp", "http") and self.port is None:
             raise ValueError("a verificação de saúde escolhida exige uma porta")
         if self.process_match.port_owner and self.port is None:

@@ -170,3 +170,86 @@ def test_server_opened_outside_sentinel_is_recognized_and_not_duplicated(fast_se
         agent.stop()
         if outside.poll() is None:
             outside.kill()
+
+
+def _wait_for(fn, timeout, interval=0.5):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        value = fn()
+        if value:
+            return value
+        time.sleep(interval)
+    return None
+
+
+def _events(settings, event_type):
+    import sqlite3
+
+    conn = sqlite3.connect(settings.paths.database_file)
+    try:
+        return [r[0] for r in conn.execute("SELECT title FROM events WHERE event_type = ? ORDER BY id", (event_type,))]
+    finally:
+        conn.close()
+
+
+def test_auto_restart_recovers_and_respects_attempt_limit(fast_settings, tmp_path):
+    """Política autorizada: recupera uma queda; quando a recuperação é impossível, desiste no limite."""
+    import sys
+
+    flag = tmp_path / "pode-iniciar"
+    flag.write_text("1")
+    script = tmp_path / "srv.py"
+    script.write_text(
+        "import http.server, os, sys\n"
+        f"if not os.path.exists({str(flag)!r}): sys.exit(3)\n"
+        "http.server.ThreadingHTTPServer(('127.0.0.1', int(sys.argv[1])), http.server.SimpleHTTPRequestHandler).serve_forever()\n"
+    )
+    port = free_port()
+    agent = RunningAgent(fast_settings)
+    try:
+        client = LocalClient(fast_settings)
+        created = client.request("POST", "/api/v1/servers", {
+            "name": "auto", "management": "managed", "executable": sys.executable,
+            "arguments": [str(script), str(port)], "port": port, "health_check": {"type": "tcp"},
+            "startup_grace_seconds": 5,
+            "restart_policy": {"enabled": True, "max_attempts": 2, "window_minutes": 60, "initial_delay_seconds": 0},
+        })
+        sid = created["server"]["id"]
+        first = client.request("POST", f"/api/v1/servers/{sid}/actions/start")
+        assert first["ok"], first
+
+        # 1) queda recuperável: o Sentinel reinicia sozinho
+        psutil.Process(first["pid"]).kill()
+        recovered = _wait_for(lambda: (d := client.request("GET", f"/api/v1/servers/{sid}"))["status"]["state"] == "online"
+                              and d["status"]["main_pid"] not in (None, first["pid"]) and d, 40)
+        assert recovered, "não recuperou automaticamente"
+        assert any("recuperado" in t for t in _events(fast_settings, "server.auto_restart"))
+
+        # 2) queda irrecuperável: tenta até o limite e desiste avisando
+        flag.unlink()
+        psutil.Process(recovered["status"]["main_pid"]).kill()
+        exhausted = _wait_for(lambda: any("esgotado" in t for t in _events(fast_settings, "server.auto_restart")), 60)
+        assert exhausted, _events(fast_settings, "server.auto_restart")
+        status = client.request("GET", f"/api/v1/servers/{sid}")["status"]
+        assert status["auto_restart_exhausted"] and len(status["auto_restarts"]) == 2
+        assert status["state"] == "offline"
+
+        # auditoria identifica a política como autora
+        import sqlite3
+        conn = sqlite3.connect(fast_settings.paths.database_file)
+        actors = {r[0] for r in conn.execute("SELECT actor FROM audit_logs WHERE target = 'auto'")}
+        conn.close()
+        assert "sentinel:politica-reinicio" in actors
+    finally:
+        agent.stop()
+
+
+def test_restart_policy_requires_managed_server(fast_settings):
+    agent = RunningAgent(fast_settings)
+    try:
+        client = LocalClient(fast_settings)
+        with pytest.raises(ApiError) as exc:
+            client.request("POST", "/api/v1/servers", {"name": "obs", "port": 5432, "restart_policy": {"enabled": True}})
+        assert exc.value.status == 422
+    finally:
+        agent.stop()

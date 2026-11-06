@@ -6,6 +6,7 @@ import { LineChart, legend, dataTable } from "./chart.js";
 import * as fmt from "./format.js";
 import { h, card, meter, setMeter, severityBadge } from "./ui.js";
 import { serversPage, serverFormPage, serverDetailPage, statePill, summarize } from "./servers.js";
+import { settingsPage } from "./settings.js";
 
 const view = document.getElementById("view");
 const banner = document.getElementById("banner");
@@ -427,6 +428,7 @@ const routes = {
   "/processos": processesPage,
   "/historico": historyPage,
   "/servidores": () => serversPage(view),
+  "/configuracoes": () => settingsPage(view),
 };
 
 // Rotas com parâmetro: #/servidores/novo?pid=N, #/servidores/ID, #/servidores/ID/editar

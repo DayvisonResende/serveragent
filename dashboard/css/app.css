@@ -189,6 +189,10 @@ details.data-table summary { cursor: pointer; color: var(--text-muted); }
 .log-view { background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 10px; max-height: 420px; overflow: auto; font: 12px/1.45 ui-monospace, Consolas, monospace; color: var(--text-secondary); white-space: pre-wrap; word-break: break-all; }
 
 .input-row { display: flex; gap: 8px; }
+fieldset.policy { border: 1px solid var(--grid); border-radius: 8px; padding: 12px 14px; display: grid; gap: 10px; }
+fieldset.policy legend { color: var(--text-secondary); padding: 0 6px; }
+.steps { color: var(--text-secondary); padding-left: 20px; line-height: 1.7; }
+code { font-family: ui-monospace, Consolas, monospace; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 .form-field:has(.input-row) { grid-column: 1 / -1; }  /* caminhos longos: linha inteira */
 .input-row input { flex: 1; min-width: 0; }
 .spacer { flex: 1; }

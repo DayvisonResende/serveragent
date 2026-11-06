@@ -15,7 +15,7 @@ from sentinel.modules.servers.models import ServerRecord, ServerSpec
 _COLUMNS = (
     "id, name, description, server_type, management, executable, arguments_json, working_directory, port, "
     "protocol, health_check_json, process_match_json, log_path, criticality, startup_grace_seconds, enabled, "
-    "created_at, updated_at"
+    "restart_policy_json, created_at, updated_at"
 )
 
 
@@ -42,6 +42,7 @@ def _record(row: dict[str, Any]) -> ServerRecord:
             "criticality": row["criticality"],
             "startup_grace_seconds": row["startup_grace_seconds"],
             "enabled": bool(row["enabled"]),
+            "restart_policy": json.loads(row["restart_policy_json"] or "{}"),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         },
@@ -54,7 +55,7 @@ def _params(spec: ServerSpec) -> tuple[Any, ...]:
         spec.name, spec.description, spec.server_type, spec.management, spec.executable,
         json.dumps(spec.arguments, ensure_ascii=False), spec.working_directory, spec.port, spec.protocol,
         spec.health_check.model_dump_json(), spec.process_match.model_dump_json(), spec.log_path,
-        spec.criticality, spec.startup_grace_seconds, int(spec.enabled),
+        spec.criticality, spec.startup_grace_seconds, int(spec.enabled), spec.restart_policy.model_dump_json(),
     )
 
 
@@ -80,8 +81,8 @@ class ServerRepository:
             server_id = await self._db.insert(
                 "INSERT INTO servers (name, description, server_type, management, executable, arguments_json,"
                 " working_directory, port, protocol, health_check_json, process_match_json, log_path, criticality,"
-                " startup_grace_seconds, enabled, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " startup_grace_seconds, enabled, restart_policy_json, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (*_params(spec), now, now),
             )
         except DatabaseError as exc:
@@ -100,7 +101,7 @@ class ServerRepository:
                 "UPDATE servers SET name = ?, description = ?, server_type = ?, management = ?, executable = ?,"
                 " arguments_json = ?, working_directory = ?, port = ?, protocol = ?, health_check_json = ?,"
                 " process_match_json = ?, log_path = ?, criticality = ?, startup_grace_seconds = ?, enabled = ?,"
-                " updated_at = ? WHERE id = ?",
+                " restart_policy_json = ?, updated_at = ? WHERE id = ?",
                 (*_params(spec), now, server_id),
             ).rowcount
 
