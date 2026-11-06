@@ -2,8 +2,13 @@
 
 Iniciar: o servidor nasce **desacoplado** do Sentinel (PRD 2.4 e critério 12 do
 MVP). No Windows o agente roda dentro do *job object* da tarefa agendada; um
-filho comum morreria junto com ele. Usamos DETACHED_PROCESS +
-CREATE_NEW_PROCESS_GROUP + CREATE_BREAKAWAY_FROM_JOB. Se o job não permitir
+filho comum morreria junto com ele. Usamos CREATE_NO_WINDOW (console oculto, que
+os filhos herdam — sem janelas pretas) + CREATE_NEW_PROCESS_GROUP +
+CREATE_BREAKAWAY_FROM_JOB.
+
+Scripts .bat/.cmd rodam pelo cmd.exe numa linha de comando montada aqui, num
+formato fixo (``cmd /d /s /c ""script" args"``); os argumentos já chegam
+validados (sem metacaracteres do cmd). Se o job não permitir
 sair (ERROR_ACCESS_DENIED), iniciamos sem o breakaway e avisamos que o servidor
 pode não sobreviver ao encerramento do Sentinel — nunca silenciosamente.
 
@@ -56,8 +61,14 @@ def _windows_dir() -> str:
     return os.environ.get("SystemRoot", r"C:\Windows").lower()
 
 
-def protection_reason(proc: psutil.Process) -> str | None:
-    """Motivo pelo qual o processo não pode ser encerrado pelo Sentinel, ou None."""
+SCRIPT_HOSTS = frozenset({"cmd.exe"})
+
+
+def protection_reason(proc: psutil.Process, script_path: str | None = None) -> str | None:
+    """Motivo pelo qual o processo não pode ser encerrado pelo Sentinel, ou None.
+
+    ``script_path``: servidor .bat/.cmd — o cmd.exe que executa ESSE script pode ser
+    encerrado, apesar de estar na pasta do Windows."""
     try:
         if proc.pid in (0, 4) or proc.pid == os.getpid() or proc.pid == os.getppid():
             return "processo do sistema ou do próprio Sentinel"
@@ -73,22 +84,40 @@ def protection_reason(proc: psutil.Process) -> str | None:
         except psutil.AccessDenied:
             return "sem permissão para identificar o executável"
         if sys.platform == "win32" and exe.startswith(_windows_dir() + "\\"):
+            if script_path and name in SCRIPT_HOSTS and _runs_script(proc, script_path):
+                return None
             return "executável dentro da pasta do Windows"
     except psutil.NoSuchProcess:
         return None
     return None
 
 
+def _runs_script(proc: psutil.Process, script_path: str) -> bool:
+    try:
+        return script_path.lower() in " ".join(proc.cmdline()).lower()
+    except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+        return False
+
+
+def script_command_line(script_path: str, arguments: list[str]) -> str:
+    """Linha de comando fixa para executar um .bat/.cmd (argumentos já validados)."""
+    comspec = os.environ.get("ComSpec") or os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe")
+    inner = " ".join([f'"{script_path}"', *arguments])
+    return f'"{comspec}" /d /s /c "{inner}"'
+
+
 def launch_detached(executable: str, arguments: list[str], working_directory: str | None, log_file: Path) -> LaunchResult:
     """Inicia o servidor sem shell, com saída redirecionada para ``log_file``."""
     log_file.parent.mkdir(parents=True, exist_ok=True)
     _rotate(log_file)
-    cwd = working_directory or str(Path(executable).parent)
+    path_module = ntpath if sys.platform == "win32" else os.path
+    cwd = working_directory or path_module.dirname(executable)  # scripts costumam usar caminhos relativos
+    script = path_module.splitext(executable)[1].lower() in (".bat", ".cmd")
     with open(log_file, "ab") as out:
         out.write(f"\n===== Iniciado pelo Sentinel ({executable}) =====\n".encode("utf-8", "replace"))
         out.flush()
         common = dict(
-            args=[executable, *arguments],
+            args=script_command_line(executable, arguments) if script else [executable, *arguments],
             cwd=cwd,
             stdin=subprocess.DEVNULL,
             stdout=out,
@@ -97,7 +126,7 @@ def launch_detached(executable: str, arguments: list[str], working_directory: st
             shell=False,
         )
         if sys.platform == "win32":
-            base = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+            base = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
             breakaway = 0x01000000  # CREATE_BREAKAWAY_FROM_JOB
             try:
                 proc = subprocess.Popen(creationflags=base | breakaway, **common)  # type: ignore[call-overload]
@@ -116,14 +145,14 @@ def launch_detached(executable: str, arguments: list[str], working_directory: st
         return LaunchResult(proc.pid, True, popen=proc)
 
 
-def terminate_tree(pid: int, timeout: float = 10.0) -> StopResult:
+def terminate_tree(pid: int, timeout: float = 10.0, script_path: str | None = None) -> StopResult:
     """Encerra o processo e seus filhos (filhos primeiro). Força o que não sair no prazo.
 
     No Windows, processos sem console não recebem um pedido de encerramento
     "educado": terminate() equivale a encerrar imediatamente.
     """
     root = psutil.Process(pid)
-    reason = protection_reason(root)
+    reason = protection_reason(root, script_path)
     if reason:
         raise PermissionError(f"Processo {pid} protegido: {reason}")
     try:

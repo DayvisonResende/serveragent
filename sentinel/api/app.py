@@ -51,7 +51,7 @@ async def require_session(request: Request) -> None:
 
 
 def create_app(deps: ApiDeps, dashboard_dir: Path = DASHBOARD_DIR) -> FastAPI:
-    from sentinel.api.routes import auth, events, servers, system
+    from sentinel.api.routes import auth, events, files, servers, system
 
     app = FastAPI(
         title="Sentinel",
@@ -72,6 +72,7 @@ def create_app(deps: ApiDeps, dashboard_dir: Path = DASHBOARD_DIR) -> FastAPI:
     app.include_router(system.router, dependencies=protected)
     app.include_router(events.router, dependencies=protected)
     app.include_router(servers.router, dependencies=protected)
+    app.include_router(files.router, dependencies=protected)
     app.include_router(events.ws_router)  # autenticação feita no handshake
 
     app.mount("/", StaticFiles(directory=dashboard_dir, html=True), name="dashboard")

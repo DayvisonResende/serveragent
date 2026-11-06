@@ -410,7 +410,7 @@ class ServersModule(Module):
         roots = [p for p in match.processes if p.ppid not in set(match.pids)]
         for proc in roots:
             try:
-                reason = protection_reason(psutil.Process(proc.pid))
+                reason = protection_reason(psutil.Process(proc.pid), record.executable if record.is_script else None)
             except psutil.NoSuchProcess:
                 continue
             if reason:
@@ -420,7 +420,10 @@ class ServersModule(Module):
         stopped, forced = [], []
         for proc in roots:
             try:
-                res = await asyncio.to_thread(terminate_tree, proc.pid, self._ctx.settings.servers.stop_timeout_seconds)
+                res = await asyncio.to_thread(
+                    terminate_tree, proc.pid, self._ctx.settings.servers.stop_timeout_seconds,
+                    record.executable if record.is_script else None,
+                )
             except psutil.NoSuchProcess:
                 continue
             except PermissionError as exc:

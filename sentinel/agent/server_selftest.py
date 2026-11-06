@@ -22,6 +22,7 @@ from sentinel.agent.config import Settings
 from sentinel.agent.selfcheck import Check
 
 TEST_NAME = "sentinel-teste"
+BAT_TEST_NAME = "sentinel-teste-bat"
 
 
 def _state_file(settings: Settings) -> Path:
@@ -49,15 +50,15 @@ def _wait(fn: Callable[[], Any], timeout: float, interval: float = 1.0) -> Any:
     return None
 
 
-def _find(client: LocalClient) -> dict[str, Any] | None:
+def _find(client: LocalClient, name: str = TEST_NAME) -> dict[str, Any] | None:
     for item in client.request("GET", "/api/v1/servers")["servers"]:
-        if item["server"]["name"] == TEST_NAME:
+        if item["server"]["name"] == name:
             return item
     return None
 
 
-def _cleanup_previous(client: LocalClient, checks: list[Check]) -> None:
-    previous = _find(client)
+def _cleanup_previous(client: LocalClient, checks: list[Check], name: str = TEST_NAME) -> None:
+    previous = _find(client, name)
     if previous is None:
         return
     sid = previous["server"]["id"]
@@ -67,7 +68,7 @@ def _cleanup_previous(client: LocalClient, checks: list[Check]) -> None:
         except ApiError:
             pass
     client.request("DELETE", f"/api/v1/servers/{sid}")
-    checks.append(Check("Limpeza de teste anterior", True, "cadastro de teste antigo removido"))
+    checks.append(Check("Limpeza de teste anterior", True, f"cadastro '{name}' antigo removido"))
 
 
 def prepare(settings: Settings) -> list[Check]:
@@ -75,6 +76,7 @@ def prepare(settings: Settings) -> list[Check]:
     client = LocalClient(settings)
     client.login()
     _cleanup_previous(client, checks)
+    _cleanup_previous(client, checks, BAT_TEST_NAME)
 
     root = settings.paths.data_dir / "selftest" / "www"
     root.mkdir(parents=True, exist_ok=True)
@@ -139,9 +141,53 @@ def prepare(settings: Settings) -> list[Check]:
     checks.append(Check("Operações registradas no histórico", {"server_start", "server_restart"} <= audit,
                         "auditoria: " + ", ".join(sorted(audit)) if audit else "nenhum registro de auditoria"))
 
+    if sys.platform == "win32":
+        checks.extend(_bat_lifecycle(client, settings, root))
+
     _state_file(settings).write_text(json.dumps({"server_id": sid, "pid": restarted["pid"]}), encoding="utf-8")
     checks.append(Check("Servidor de teste em execução", True, f"PID {restarted['pid']} (usado na próxima etapa)"))
     return checks
+
+
+def _bat_lifecycle(client: LocalClient, settings: Settings, root: Path) -> list[Check]:
+    """Servidor iniciado por um .bat (Windows): sobe, conta o filho, e parar encerra a árvore."""
+    checks: list[Check] = []
+    port = _free_port()
+    script = settings.paths.data_dir / "selftest" / "start-teste.bat"
+    script.write_text(
+        "@echo off\r\n"
+        f'"{_base_python()}" -m http.server %1 --bind 127.0.0.1 --directory "{root}"\r\n',
+        encoding="ascii",
+    )
+    spec = {
+        "name": BAT_TEST_NAME, "server_type": "python", "management": "managed", "executable": str(script),
+        "arguments": [str(port)], "port": port, "protocol": "http",
+        "health_check": {"type": "http", "path": "/", "timeout_seconds": 3}, "startup_grace_seconds": 30,
+    }
+    try:
+        sid = client.request("POST", "/api/v1/servers", spec)["server"]["id"]
+        started = client.request("POST", f"/api/v1/servers/{sid}/actions/start", {"reason": "autoteste .bat"})
+    except ApiError as exc:
+        return [Check("Servidor via .bat: iniciar", False, str(exc.detail))]
+    ok = started["ok"] and started["state"] == "online"
+    checks.append(Check("Servidor via .bat: iniciar", ok, started["message"] + (f" — {started['warning']}" if started.get("warning") else "")))
+    if ok:
+        detail = client.request("GET", f"/api/v1/servers/{sid}")["status"]
+        checks.append(Check("Servidor via .bat: processo filho contabilizado", len(detail["pids"]) >= 2,
+                            f"{len(detail['pids'])} processo(s): cmd.exe + python.exe esperados"))
+        stopped = client.request("POST", f"/api/v1/servers/{sid}/actions/stop", {"reason": "autoteste .bat"})
+        port_closed = _wait(lambda: not _port_open(port), 10)
+        checks.append(Check("Servidor via .bat: parar encerra o script e o filho", stopped["ok"] and bool(port_closed),
+                            stopped["message"] + ("" if port_closed else f" — porta {port} continua aberta")))
+    client.request("DELETE", f"/api/v1/servers/{sid}")
+    script.unlink(missing_ok=True)
+    return checks
+
+
+def _port_open(port: int) -> bool:
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
 
 
 def _audited_operations(settings: Settings) -> set[str]:

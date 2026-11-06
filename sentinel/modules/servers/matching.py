@@ -71,7 +71,19 @@ def find_server_processes(
     roots = [p for p in candidates if p.ppid not in by_pid]
     roots.sort(key=lambda p: p.create_time if p.create_time is not None else float("inf"))
     main = roots[0].pid if roots else None
-    return MatchResult(sorted(by_pid), main, candidates)
+
+    # Descendentes entram na conta (ex.: java.exe iniciado pelo .bat, workers do node).
+    children: dict[int, list[ProcessInfo]] = {}
+    for p in procs:
+        if p.ppid is not None:
+            children.setdefault(p.ppid, []).append(p)
+    stack = list(by_pid)
+    while stack and len(by_pid) <= MAX_MATCHED_PROCESSES * 2:
+        for child in children.get(stack.pop(), []):
+            if child.pid not in by_pid:
+                by_pid[child.pid] = child
+                stack.append(child.pid)
+    return MatchResult(sorted(by_pid), main, list(by_pid.values()))
 
 
 def _still_running(proc: ProcessInfo) -> bool:

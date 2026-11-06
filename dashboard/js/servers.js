@@ -3,6 +3,7 @@
 import { getJSON, sendJSON, ApiError } from "./api.js";
 import * as fmt from "./format.js";
 import { h, card } from "./ui.js";
+import { pickPath, dirname, basename } from "./filepicker.js";
 
 const STATES = {
   online: ["Online", "pill-good"],
@@ -131,11 +132,19 @@ export function summarize(servers) {
 
 // --------------------------------------------------------- formulário
 
-function input(name, label, value, attrs = {}, hint = null) {
+function input(name, label, value, attrs = {}, hint = null, browse = null) {
   const id = `f-${name}`;
+  const el = h("input", { id, name, value: value ?? "", ...attrs });
+  const control = browse
+    ? h("div", { class: "input-row" }, el, h("button", { type: "button", class: "btn", text: "Procurar…", onclick: async () => {
+        const start = el.value ? (browse.kind === "directory" ? el.value : dirname(el.value)) : null;
+        const chosen = await pickPath({ kind: browse.kind, start });
+        if (chosen) { el.value = chosen; browse.onPick?.(chosen); }
+      } }))
+    : el;
   return h("div", { class: "form-field" },
     h("label", { for: id, text: label }),
-    h("input", { id, name, value: value ?? "", ...attrs }),
+    control,
     hint ? h("small", { class: "muted", text: hint }) : null);
 }
 
@@ -158,22 +167,33 @@ export async function serverFormPage(view, { id, pid } = {}) {
   const hc = spec.health_check || {};
   const pm = spec.process_match || {};
   const feedback = h("div");
+  const scriptHint = h("p", { class: "form-message form-wide small", hidden: !/\.(bat|cmd)$/i.test(spec.executable || ""),
+    text: "Script .bat/.cmd: executado pelo cmd.exe num formato fixo. Argumentos só com letras, números e . _ - : \\ / = + , @ (sem espaços nem & | % ^ < > !). Para parar, o Sentinel encerra o script e os programas que ele iniciou." });
   const form = h("form", { class: "form-grid", novalidate: true },
     input("name", "Nome", spec.name, { required: true, maxlength: 80 }),
     select("server_type", "Tipo", TYPES, spec.server_type),
     input("description", "Descrição", spec.description, { maxlength: 500 }),
     select("management", "Gerenciamento", { observed: "Observado (só monitorar)", managed: "Gerenciado (iniciar/parar/reiniciar)" }, spec.management),
-    input("executable", "Executável (caminho completo)", spec.executable, { maxlength: 500 }, "Obrigatório para servidores gerenciados. Interpretadores de comandos (cmd, PowerShell) não são aceitos."),
+    input("executable", "Executável ou script", spec.executable, { maxlength: 500 },
+      "Arquivo .exe, .bat ou .cmd. Obrigatório para servidores gerenciados. Interpretadores de comandos (cmd, PowerShell) não são aceitos.",
+      { kind: "executable", onPick: (path) => {
+        const wd = form.elements.namedItem("working_directory");
+        const nm = form.elements.namedItem("name");
+        if (!wd.value) wd.value = dirname(path);
+        if (!nm.value) nm.value = basename(path).replace(/\.(exe|bat|cmd|com)$/i, "");
+        scriptHint.hidden = !/\.(bat|cmd)$/i.test(path);
+      } }),
+    scriptHint,
     h("div", { class: "form-field" },
       h("label", { for: "f-arguments", text: "Argumentos (um por linha)" }),
       h("textarea", { id: "f-arguments", name: "arguments", rows: 3, text: (spec.arguments || []).join("\n") })),
-    input("working_directory", "Diretório de trabalho", spec.working_directory, { maxlength: 500 }),
+    input("working_directory", "Diretório de trabalho", spec.working_directory, { maxlength: 500 }, "Vazio: a pasta do executável.", { kind: "directory" }),
     input("port", "Porta", spec.port, { type: "number", min: 1, max: 65535 }),
     select("protocol", "Protocolo", { tcp: "TCP", udp: "UDP", http: "HTTP", https: "HTTPS" }, spec.protocol || "tcp"),
     select("health_type", "Verificação de saúde", HEALTH, hc.type || "none"),
     input("health_path", "Caminho HTTP", hc.path || "/", { maxlength: 300 }, "Usado na verificação HTTP, ex.: /health"),
     input("health_expected", "Status HTTP esperado", hc.expected_status, { type: "number", min: 100, max: 599 }, "Vazio: qualquer status abaixo de 400"),
-    input("log_path", "Arquivo de log da aplicação", spec.log_path, { maxlength: 500 }),
+    input("log_path", "Arquivo de log da aplicação", spec.log_path, { maxlength: 500 }, null, { kind: "log" }),
     select("criticality", "Criticidade", CRITICALITY, spec.criticality),
     input("startup_grace_seconds", "Tempo para iniciar (s)", spec.startup_grace_seconds, { type: "number", min: 3, max: 600 }),
     h("details", { class: "form-field form-wide" },
@@ -224,10 +244,11 @@ export async function serverFormPage(view, { id, pid } = {}) {
     }
   });
 
-  view.replaceChildren(
+  view.replaceChildren(...[
     h("div", { class: "page-head" }, h("h1", { text: id ? `Editar ${spec.name}` : "Cadastrar servidor" })),
     hint ? message(hint) : null,
-    h("section", { class: "card" }, form));
+    h("section", { class: "card" }, form),
+  ].filter(Boolean));
   return {};
 }
 

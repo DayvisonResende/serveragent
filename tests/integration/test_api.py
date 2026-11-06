@@ -210,3 +210,31 @@ def test_websocket_streams_after_login(api):
         assert api.deps.hub.client_count == 1
         api.deps.hub.publish({"type": "event", "data": {"title": "teste"}})
         assert ws.receive_json() == {"type": "event", "data": {"title": "teste"}}
+
+
+def test_file_browser_lists_only_folders_and_wanted_files(api, tmp_path):
+    import os
+    import stat
+
+    (tmp_path / "sub").mkdir()
+    (tmp_path / ".oculta").mkdir()
+    exe = tmp_path / "servidor"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
+    (tmp_path / "notas.docx").write_text("x")
+    (tmp_path / "app.log").write_text("x")
+    assert api.client.get("/api/v1/files/browse").status_code == 401  # exige sessão
+    api.login()
+    roots = api.client.get("/api/v1/files/browse").json()
+    assert roots["roots"] and roots["path"] is None
+    data = api.client.get("/api/v1/files/browse", params={"path": str(tmp_path)}).json()
+    names = [e["name"] for e in data["entries"]]
+    if os.name != "nt":
+        assert names == ["sub", "servidor"]  # pastas primeiro; ocultos e .docx fora
+    logs = api.client.get("/api/v1/files/browse", params={"path": str(tmp_path), "kind": "log"}).json()
+    assert [e["name"] for e in logs["entries"]] == ["sub", "app.log"]
+    assert data["parent"] == str(tmp_path.parent)
+    assert api.client.get("/api/v1/files/browse", params={"path": "relativo"}).status_code == 422
+    assert api.client.get("/api/v1/files/browse", params={"path": str(tmp_path / "nada")}).status_code == 404
+    content = api.client.get("/api/v1/files/browse", params={"path": str(tmp_path)}).text
+    assert "#!/bin/sh" not in content  # nunca devolve conteúdo de arquivos

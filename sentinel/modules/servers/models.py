@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ntpath
 import os
+import re
 import sys
 from enum import StrEnum
 from pathlib import Path
@@ -47,6 +48,31 @@ FORBIDDEN_EXECUTABLES = frozenset(
     }
 )
 ALLOWED_WINDOWS_EXTENSIONS = frozenset({".exe", ".com"})
+SCRIPT_EXTENSIONS = frozenset({".bat", ".cmd"})
+# Argumentos de scripts .bat/.cmd passam pelo cmd.exe: só caracteres que ele não interpreta.
+_SAFE_SCRIPT_ARG = re.compile(r"^[\w.:\\/=+,@-]+$")
+_UNSAFE_SCRIPT_PATH_CHARS = frozenset('%^&|<>!"\n\r')
+
+
+def is_script(path: str | None) -> bool:
+    return bool(path) and _suffix(path) in SCRIPT_EXTENSIONS
+
+
+def _suffix(path: str) -> str:
+    return ntpath.splitext(path)[1].lower() if ("\\" in path or ":" in path) else os.path.splitext(path)[1].lower()
+
+
+def validate_script(path: str, arguments: list[str]) -> None:
+    """Regras para .bat/.cmd: o cmd.exe interpreta & | < > ^ % ! — esses caracteres
+    transformariam um argumento em um comando extra."""
+    bad = sorted(set(path) & _UNSAFE_SCRIPT_PATH_CHARS)
+    if bad:
+        raise ValueError(f"o caminho do script contém caracteres não permitidos: {' '.join(bad)}")
+    for arg in arguments:
+        if not _SAFE_SCRIPT_ARG.match(arg):
+            raise ValueError(
+                f"argumento '{arg}' não permitido para scripts .bat/.cmd: use apenas letras, números e . _ - : \\ / = + , @ (sem espaços)"
+            )
 MAX_ARGS = 50
 MAX_ARG_LENGTH = 1000
 
@@ -137,6 +163,8 @@ class ServerSpec(BaseModel):
             if not self.executable:
                 raise ValueError("servidor gerenciado precisa de um executável")
             validate_executable(self.executable, check_exists=check_exists)
+            if is_script(self.executable):
+                validate_script(self.executable, self.arguments)
             if self.working_directory and not Path(self.working_directory).is_absolute():
                 raise ValueError("diretório de trabalho deve ser um caminho absoluto")
         if self.health_check.type in ("port", "tcp", "http") and self.port is None:
@@ -151,6 +179,9 @@ class ServerSpec(BaseModel):
         """Critério efetivo: o informado ou um derivado do executável/argumentos/porta."""
         if not self.process_match.is_empty():
             return self.process_match
+        if self.executable and is_script(self.executable):
+            # O processo raiz é o cmd.exe que executa o script; a linha de comando contém o caminho dele.
+            return ProcessMatch(name="cmd.exe", cmdline_contains=[self.executable])
         if self.executable:
             return ProcessMatch(exe_path=self.executable, cmdline_contains=[a for a in self.arguments if a][:10])
         return ProcessMatch(port_owner=True)
@@ -164,9 +195,14 @@ def validate_executable(path: str, check_exists: bool = True) -> None:
     name = _basename(path)
     if name in FORBIDDEN_EXECUTABLES:
         raise ValueError(f"'{name}' é um interpretador de comandos e não pode ser cadastrado como servidor")
-    if sys.platform == "win32" and Path(path).suffix.lower() not in ALLOWED_WINDOWS_EXTENSIONS:
-        raise ValueError("no Windows, apenas arquivos .exe podem ser iniciados (scripts .bat/.cmd exigiriam o cmd.exe)")
-    if check_exists and not Path(path).is_file():
+    if not check_exists:
+        return  # carregando do banco: regras de plataforma e existência valem ao cadastrar/iniciar
+    suffix = _suffix(path)
+    if suffix in SCRIPT_EXTENSIONS and sys.platform != "win32":
+        raise ValueError("scripts .bat/.cmd só podem ser iniciados no Windows")
+    if sys.platform == "win32" and suffix not in ALLOWED_WINDOWS_EXTENSIONS | SCRIPT_EXTENSIONS:
+        raise ValueError("no Windows, informe um arquivo .exe, .bat ou .cmd")
+    if not Path(path).is_file():
         raise ValueError(f"executável não encontrado: {path}")
 
 
@@ -174,6 +210,10 @@ class ServerRecord(ServerSpec):
     """Servidor cadastrado (com identificador e datas)."""
 
     id: int
+
+    @property
+    def is_script(self) -> bool:
+        return is_script(self.executable)
     created_at: str
     updated_at: str
 

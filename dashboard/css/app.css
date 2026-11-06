@@ -24,6 +24,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }  /* classes com display não podem anular o atributo hidden */
 html, body { margin: 0; background: var(--page); color: var(--text-primary); font: 14px/1.45 var(--font); }
 a { color: var(--text-primary); }
 h1, h2, h3 { margin: 0; font-weight: 600; }
@@ -186,6 +187,22 @@ details.data-table summary { cursor: pointer; color: var(--text-muted); }
 .form-message-error { border-color: var(--status-critical); }
 .form-message-ok { border-color: var(--status-good); }
 .log-view { background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 10px; max-height: 420px; overflow: auto; font: 12px/1.45 ui-monospace, Consolas, monospace; color: var(--text-secondary); white-space: pre-wrap; word-break: break-all; }
+
+.input-row { display: flex; gap: 8px; }
+.form-field:has(.input-row) { grid-column: 1 / -1; }  /* caminhos longos: linha inteira */
+.input-row input { flex: 1; min-width: 0; }
+.spacer { flex: 1; }
+dialog.picker { width: min(720px, 94vw); max-height: 86vh; background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+dialog.picker:not([open]) { display: none; }
+dialog.picker::backdrop { background: rgba(0, 0, 0, 0.6); }
+.picker-path { font: 12px ui-monospace, Consolas, monospace; color: var(--text-secondary); background: var(--page); padding: 8px 10px; border-radius: 8px; word-break: break-all; }
+.picker-list { list-style: none; margin: 0; padding: 0; overflow: auto; min-height: 200px; max-height: 55vh; border: 1px solid var(--grid); border-radius: 8px; }
+.picker-list li { display: grid; grid-template-columns: 20px 1fr auto; gap: 8px; align-items: center; padding: 7px 10px; cursor: pointer; border-top: 1px solid var(--grid); }
+.picker-list li:first-child { border-top: 0; }
+.picker-list li:hover, .picker-list li:focus { background: var(--surface-2); outline: none; }
+.picker-list li.file .picker-name { color: var(--text-primary); font-weight: 500; }
+.picker-icon { color: var(--text-muted); text-align: center; }
+.picker-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 640px) {
   .topbar { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }

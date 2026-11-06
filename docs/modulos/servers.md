@@ -51,10 +51,27 @@ Conjunto fechado: `server_start`, `server_stop`, `server_restart`. Não existe e
 Nesta fase quem autoriza é o usuário autenticado (com confirmação no dashboard ou
 na CLI). **Na Fase 4 as operações passam pelo sistema de aprovações.**
 
+## Scripts .bat/.cmd
+
+Aceitos como executável de servidores gerenciados (Windows). Como passam pelo
+`cmd.exe`, o Sentinel monta a linha de comando num formato fixo
+(`cmd /d /s /c ""script" args"`) e os argumentos só podem ter letras, números e
+`. _ - : \ / = + , @` — sem espaços nem `& | % ^ < > ! "`, que o cmd interpretaria
+como comandos extras. O processo é reconhecido pelo `cmd.exe` cuja linha de
+comando contém o caminho do script; CPU e memória somam os processos filhos
+(ex.: `java.exe`). Parar encerra o `cmd.exe` desse script e toda a sua árvore.
+
+## Escolha de arquivos
+
+O botão "Procurar…" do cadastro usa `GET /api/v1/files/browse` (somente leitura):
+unidades, atalhos (pasta pessoal, Área de Trabalho, Documentos, Downloads,
+Arquivos de Programas) e o conteúdo de pastas filtrado por tipo — executáveis/scripts,
+logs ou só pastas. Nunca devolve conteúdo de arquivos.
+
 ## Independência (PRD 2.4, MVP 12)
 
-Servidores iniciados pelo Sentinel nascem desacoplados: `DETACHED_PROCESS |
-CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB` no Windows, nova sessão em
+Servidores iniciados pelo Sentinel nascem desacoplados: `CREATE_NO_WINDOW |
+CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB` no Windows (console oculto: sem janelas pretas), nova sessão em
 POSIX. Se o Windows recusar o breakaway, o servidor inicia mesmo assim e a
 operação devolve um **aviso** explícito. Encerrar o Sentinel nunca encerra servidores.
 

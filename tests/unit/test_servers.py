@@ -204,3 +204,49 @@ def test_tail_file_reads_end_and_reports_missing(tmp_path):
     tail = tail_file(log, lines=3)
     assert tail["lines"] == ["linha 997", "linha 998", "linha 999"] and tail["truncated"]
     assert tail_file(tmp_path / "nao-existe.log")["available"] is False
+
+
+# ------------------------------------------------------------ scripts .bat
+
+from sentinel.modules.servers.models import is_script, validate_script  # noqa: E402
+from sentinel.oslayer.process_control import script_command_line  # noqa: E402
+
+
+def test_script_arguments_cannot_inject_commands():
+    validate_script(r"C:\Servers\Mine (1.20)\start.bat", ["nogui", "-Xmx2G", "--port=25565", r"C:\dados\mundo"])
+    for bad in (["a&calc"], ["x|y"], ["%PATH%"], ["dois args"], ["a>b"], ["^x"], ["!v!"], ['"q"']):
+        with pytest.raises(ValueError, match="não permitido"):
+            validate_script(r"C:\s\start.bat", bad)
+    with pytest.raises(ValueError, match="caracteres"):
+        validate_script(r"C:\s\a&b.bat", [])
+    assert is_script(r"C:\x\START.CMD") and not is_script("/usr/bin/python") and not is_script(None)
+
+
+def test_script_command_line_is_fixed_format(monkeypatch):
+    monkeypatch.setenv("ComSpec", r"C:\Windows\system32\cmd.exe")
+    line = script_command_line(r"C:\Servers\Mine (1.20)\start.bat", ["nogui"])
+    assert line == r'"C:\Windows\system32\cmd.exe" /d /s /c ""C:\Servers\Mine (1.20)\start.bat" nogui"'
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="no Windows .bat é aceito")
+def test_bat_is_refused_outside_windows(tmp_path):
+    script = tmp_path / "start.bat"
+    script.write_text("@echo off")
+    with pytest.raises(ValidationError, match="só podem ser iniciados no Windows"):
+        ServerSpec(name="x", management="managed", executable=str(script))
+
+
+def test_script_server_is_recognized_by_its_cmd_host():
+    spec = ServerSpec.model_validate(
+        {"name": "mc", "management": "managed", "executable": r"C:\mc\start.bat"}, context={"skip_exists": True}
+    )
+    assert spec.effective_match() == ProcessMatch(name="cmd.exe", cmdline_contains=[r"C:\mc\start.bat"])
+
+
+def test_descendants_count_towards_server_resources():
+    cmd = proc(50, name="cmd.exe", exe=r"C:\Windows\system32\cmd.exe", cmd=("cmd.exe", "/c", r"C:\mc\start.bat"))
+    java = proc(51, name="java.exe", exe=r"C:\java\java.exe", cmd=("java", "-jar", "server.jar"), ppid=50, created=101)
+    grandchild = proc(52, name="conhost.exe", exe=None, cmd=None, ppid=51, created=102)
+    other = proc(60, name="java.exe", exe=r"C:\java\java.exe", cmd=("java",), ppid=1)
+    result = find_server_processes([cmd, java, grandchild, other], ProcessMatch(name="cmd.exe", cmdline_contains=[r"C:\mc\start.bat"]), None, {})
+    assert result.main_pid == 50 and result.pids == [50, 51, 52]
