@@ -189,12 +189,13 @@ class ServerSpec(BaseModel):
 
 def validate_executable(path: str, check_exists: bool = True) -> None:
     """Valida o executável de um servidor gerenciado. Levanta ValueError com o motivo."""
-    is_windows_path = "\\" in path or (len(path) > 1 and path[1] == ":")
-    if not (Path(path).is_absolute() or (is_windows_path and ntpath.isabs(path))):
-        raise ValueError("o executável deve ser informado por caminho absoluto")
+    # Interpretadores primeiro: o motivo mais importante aparece mesmo com caminho inválido.
     name = _basename(path)
     if name in FORBIDDEN_EXECUTABLES:
         raise ValueError(f"'{name}' é um interpretador de comandos e não pode ser cadastrado como servidor")
+    is_windows_path = "\\" in path or (len(path) > 1 and path[1] == ":")
+    if not (Path(path).is_absolute() or (is_windows_path and ntpath.isabs(path))):
+        raise ValueError("o executável deve ser informado por caminho absoluto")
     if not check_exists:
         return  # carregando do banco: regras de plataforma e existência valem ao cadastrar/iniciar
     suffix = _suffix(path)

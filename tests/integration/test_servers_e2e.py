@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 
+import psutil
 import pytest
 
 from sentinel.agent import server_selftest
@@ -144,7 +145,9 @@ def test_server_opened_outside_sentinel_is_recognized_and_not_duplicated(fast_se
                 break
             time.sleep(1)
         assert item["status"]["state"] == "online" and item["status"]["match_source"] == "port"
-        assert item["status"]["main_pid"] == outside.pid
+        # No Windows o python.exe do venv é um lançador: quem abre a porta é o processo filho.
+        family = {outside.pid} | {c.pid for c in psutil.Process(outside.pid).children(recursive=True)}
+        assert item["status"]["main_pid"] in family
 
         with pytest.raises(ApiError) as exc:
             client.request("POST", f"/api/v1/servers/{sid}/actions/start")

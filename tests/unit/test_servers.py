@@ -29,7 +29,7 @@ def test_managed_server_requires_existing_absolute_executable(tmp_path):
     with pytest.raises(ValidationError, match="absoluto"):
         ServerSpec(name="a", management="managed", executable="python")
     with pytest.raises(ValidationError, match="não encontrado"):
-        ServerSpec(name="a", management="managed", executable=str(tmp_path / "nada"))
+        ServerSpec(name="a", management="managed", executable=str(tmp_path / ("nada.exe" if sys.platform == "win32" else "nada")))
     assert ServerSpec(name="a", management="managed", executable=PY).executable == PY
 
 
