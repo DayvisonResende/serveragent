@@ -267,6 +267,7 @@ try {
         $memMb = [math]::Round($p.WorkingSet64 / 1MB, 1)
         Add-Result "Memória do agente (PID $agentPid)" ($memMb -le 200) "$memMb MB (meta: até 200 MB)"
         Add-Result "CPU em repouso" ($cpuPct -le 3) ("{0:N2}% (meta: até 3%)" -f $cpuPct)
+        Add-Checks (& $Py -m sentinel selfcheck --json --costs 2>$null | Out-String) "Custo das tarefas"
     }
     Write-Report ""
 } finally {

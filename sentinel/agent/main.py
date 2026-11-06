@@ -69,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     check_parser = commands.add_parser("selfcheck", help="testa a API, a segurança e o tempo real do agente em execução")
     check_parser.add_argument("--json", action="store_true", help="saída em JSON (ASCII), para scripts")
     check_parser.add_argument("--servers", choices=["prepare", "finish"], help="autoteste de servidores (usado pelo verificar.bat)")
+    check_parser.add_argument("--costs", action="store_true", help="apenas o custo médio das tarefas do agente")
     srv = commands.add_parser("server", help="consulta e opera servidores cadastrados")
     srv.add_argument("action", choices=["list", "start", "stop", "restart"])
     srv.add_argument("name", nargs="?", help="nome do servidor (exceto em 'list')")
@@ -85,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "status":
             return cmd_status(settings, as_json=args.json)
         if args.command == "selfcheck":
-            return cmd_selfcheck(settings, as_json=args.json, servers=args.servers)
+            return cmd_selfcheck(settings, as_json=args.json, servers=args.servers, costs=args.costs)
         if args.command == "server":
             return cmd_server(settings, args.action, args.name)
         if args.command == "stop":
@@ -178,7 +179,7 @@ async def _run_agent(settings: Settings) -> None:
         listener.stop()
 
 
-def cmd_selfcheck(settings: Settings, as_json: bool = False, servers: str | None = None) -> int:
+def cmd_selfcheck(settings: Settings, as_json: bool = False, servers: str | None = None, costs: bool = False) -> int:
     from sentinel.agent.selfcheck import Check, run_selfcheck
     from sentinel.agent.selfcheck import as_json as checks_json
 
@@ -191,6 +192,10 @@ def cmd_selfcheck(settings: Settings, as_json: bool = False, servers: str | None
             checks = [Check(f"Autoteste de servidores ({servers})", False, f"{type(exc).__name__}: {exc}")]
     else:
         checks = run_selfcheck(settings)
+        if costs:
+            checks = [c for c in checks if c.name.startswith("Custo das tarefas")] or [
+                Check("Custo das tarefas (informativo)", False, "sem dados (agente parado ou recém-iniciado)")
+            ]
     if as_json:
         print(checks_json(checks))
     else:
