@@ -109,3 +109,61 @@ def test_api_validation_conflicts_and_observed_protection(fast_settings, tmp_pat
         assert exc.value.status == 404
     finally:
         agent.stop()
+
+
+def test_server_opened_outside_sentinel_is_recognized_and_not_duplicated(fast_settings, tmp_path):
+    """Cenário real: o servidor já rodava (aberto à mão, com outros argumentos)."""
+    import shutil
+    import subprocess
+    import sys
+
+    port = free_port()
+    outside = subprocess.Popen([sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
+                               cwd=tmp_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    agent = RunningAgent(fast_settings)
+    try:
+        client = LocalClient(fast_settings)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            with socket.socket() as s:
+                if s.connect_ex(("127.0.0.1", port)) == 0:
+                    break
+            time.sleep(0.2)
+        # Cadastro com argumentos diferentes dos usados para abrir o servidor.
+        same_exe = client.request("POST", "/api/v1/servers", {
+            "name": "aberto-fora", "management": "managed", "executable": sys.executable,
+            "arguments": ["-m", "http.server", "9", "--directory", str(tmp_path)],
+            "port": port, "health_check": {"type": "http"},
+        })
+        sid = same_exe["server"]["id"]
+        item = None
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            item = client.request("GET", f"/api/v1/servers/{sid}")
+            if item["status"]["state"] == "online":
+                break
+            time.sleep(1)
+        assert item["status"]["state"] == "online" and item["status"]["match_source"] == "port"
+        assert item["status"]["main_pid"] == outside.pid
+
+        with pytest.raises(ApiError) as exc:
+            client.request("POST", f"/api/v1/servers/{sid}/actions/start")
+        assert exc.value.status == 409 and "já está em execução" in exc.value.detail
+
+        other = shutil.which("true") or sys.executable
+        if other != sys.executable:
+            wrong = client.request("POST", "/api/v1/servers", {
+                "name": "outro-exe", "management": "managed", "executable": other, "port": port,
+            })
+            with pytest.raises(ApiError) as refused:
+                client.request("POST", f"/api/v1/servers/{wrong['server']['id']}/actions/stop")
+            assert refused.value.status == 409 and "não é o executável cadastrado" in refused.value.detail
+            assert outside.poll() is None  # o processo de outro executável NÃO foi encerrado
+
+        stopped = client.request("POST", f"/api/v1/servers/{sid}/actions/stop")
+        assert stopped["ok"], stopped
+        outside.wait(timeout=10)
+    finally:
+        agent.stop()
+        if outside.poll() is None:
+            outside.kill()

@@ -20,6 +20,7 @@ class MatchResult:
     pids: list[int]
     main_pid: int | None
     processes: list[ProcessInfo]
+    source: str = "process"  # "process": pelo critério cadastrado; "port": pelo dono da porta
 
     @property
     def alive(self) -> bool:
@@ -66,6 +67,42 @@ def find_server_processes(
     else:
         candidates = []
 
+    return _with_descendants(candidates, procs, "process")
+
+
+def identify_server(
+    processes: Iterable[ProcessInfo],
+    match: ProcessMatch,
+    port: int | None,
+    listeners: dict[int, set[int | None]],
+) -> MatchResult:
+    """Reconhece pelo critério cadastrado; se nada bater mas a porta estiver em uso,
+    reconhece pelo processo dono da porta (servidor aberto fora do Sentinel, com outro
+    atalho ou outros argumentos)."""
+    procs = [p for p in processes if p.status != "zombie"]
+    result = find_server_processes(procs, match, port, listeners)
+    if result.alive or not port:
+        return result
+    owners = {pid for pid in listeners.get(port, set()) if pid is not None}
+    candidates = [p for p in procs if p.pid in owners]
+    if not candidates:
+        return result
+    return _with_descendants(candidates, procs, "port")
+
+
+def port_owner_names(processes: Iterable[ProcessInfo], port: int | None, listeners: dict[int, set[int | None]]) -> list[dict[str, object]] | None:
+    """Quem escuta na porta: None = porta livre; lista vazia = em uso, dono desconhecido."""
+    if not port or port not in listeners:
+        return None
+    by_pid = {p.pid: p for p in processes}
+    owners = []
+    for pid in sorted(x for x in listeners[port] if x is not None):
+        proc = by_pid.get(pid)
+        owners.append({"pid": pid, "name": proc.name if proc else None})
+    return owners
+
+
+def _with_descendants(candidates: list[ProcessInfo], procs: list[ProcessInfo], source: str) -> MatchResult:
     by_pid = {p.pid: p for p in candidates}
     # Processo principal: o que não tem pai entre os reconhecidos (raiz); empate → o mais antigo.
     roots = [p for p in candidates if p.ppid not in by_pid]
@@ -83,7 +120,7 @@ def find_server_processes(
             if child.pid not in by_pid:
                 by_pid[child.pid] = child
                 stack.append(child.pid)
-    return MatchResult(sorted(by_pid), main, list(by_pid.values()))
+    return MatchResult(sorted(by_pid), main, list(by_pid.values()), source)
 
 
 def _still_running(proc: ProcessInfo) -> bool:
@@ -105,4 +142,4 @@ def confirm_alive(result: MatchResult) -> MatchResult:
         return result
     by_pid = {p.pid: p for p in alive}
     roots = sorted((p for p in alive if p.ppid not in by_pid), key=lambda p: p.create_time or float("inf"))
-    return MatchResult(sorted(by_pid), roots[0].pid if roots else None, alive)
+    return MatchResult(sorted(by_pid), roots[0].pid if roots else None, alive, result.source)

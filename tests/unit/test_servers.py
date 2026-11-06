@@ -250,3 +250,26 @@ def test_descendants_count_towards_server_resources():
     other = proc(60, name="java.exe", exe=r"C:\java\java.exe", cmd=("java",), ppid=1)
     result = find_server_processes([cmd, java, grandchild, other], ProcessMatch(name="cmd.exe", cmdline_contains=[r"C:\mc\start.bat"]), None, {})
     assert result.main_pid == 50 and result.pids == [50, 51, 52]
+
+
+# ------------------------------------------- reconhecimento pela porta (fallback)
+
+from sentinel.modules.servers.matching import identify_server, port_owner_names  # noqa: E402
+
+
+def test_server_started_outside_sentinel_is_recognized_by_port():
+    caddy = proc(70, name="caddy.exe", exe=r"C:\caddy\caddy.exe", cmd=("caddy", "run", "--config", "outro.json"))
+    registered = ProcessMatch(exe_path=r"C:\caddy\caddy.exe", cmdline_contains=["run", "--config", "Caddyfile"])
+    listeners = {443: {70}}
+    by_criteria = find_server_processes([caddy], registered, 443, listeners)
+    assert not by_criteria.alive  # argumentos diferentes: o critério não bate
+    result = identify_server([caddy], registered, 443, listeners)
+    assert result.alive and result.source == "port" and result.main_pid == 70
+    assert identify_server([caddy], registered, 443, {}).alive is False  # porta livre: offline mesmo
+
+
+def test_port_owner_names():
+    procs = [proc(70, name="caddy.exe")]
+    assert port_owner_names(procs, 443, {}) is None  # livre
+    assert port_owner_names(procs, 443, {443: {70}}) == [{"pid": 70, "name": "caddy.exe"}]
+    assert port_owner_names(procs, 443, {443: {None}}) == []  # em uso, dono desconhecido

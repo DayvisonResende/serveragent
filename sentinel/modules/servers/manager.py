@@ -28,7 +28,7 @@ from sentinel.modules.monitor.processes import ProcessCollector, ProcessInfo
 from sentinel.modules.monitor.store import MetricsStore, epoch_iso
 from sentinel.modules.servers.health import HealthResult, Observation, check_health, evaluate
 from sentinel.modules.servers.logs import tail_file
-from sentinel.modules.servers.matching import MatchResult, confirm_alive, find_server_processes
+from sentinel.modules.servers.matching import MatchResult, confirm_alive, identify_server, port_owner_names
 from sentinel.modules.servers.models import BAD_STATES, ServerRecord, ServerState, validate_executable
 from sentinel.oslayer.process_control import launch_detached, listening_ports, protection_reason, terminate_tree
 
@@ -59,6 +59,10 @@ class OperationError(SentinelError):
     """Operação recusada ou malsucedida, com motivo legível."""
 
 
+class OperationRefused(OperationError):
+    """Pré-condição não atendida: nada foi feito (ex.: já em execução, porta ocupada)."""
+
+
 class ServerNotFound(SentinelError):
     """Servidor inexistente."""
 
@@ -78,6 +82,8 @@ class ServerStatus:
     incident_id: int | None = None
     operation: str | None = None
     planned_down: bool = False  # parado pelo usuário: não é incidente
+    match_source: str | None = None  # "process" | "port"
+    port_owners: list[dict[str, Any]] | None = None  # None = porta livre
     last_operation: dict[str, Any] | None = None
     warning: str | None = None
 
@@ -226,7 +232,8 @@ class ServersModule(Module):
         if not record.enabled:
             await self._transition(record, status, ServerState.DISABLED, None)
             return
-        match = await asyncio.to_thread(confirm_alive, find_server_processes(processes, record.effective_match(), record.port, listeners))
+        match = await asyncio.to_thread(confirm_alive, identify_server(processes, record.effective_match(), record.port, listeners))
+        status.port_owners = port_owner_names(processes, record.port, listeners)
         health = await check_health(record.health_check, record.port, listeners) if match.alive else HealthResult("skipped")
         result = evaluate(status.state, status.failures, Observation(match.alive, health), self._ctx.settings.servers.failure_threshold)
         self._apply_match(status, match)
@@ -254,6 +261,7 @@ class ServersModule(Module):
 
     def _apply_match(self, status: ServerStatus, match: MatchResult) -> None:
         status.pids, status.main_pid = match.pids, match.main_pid
+        status.match_source = match.source if match.alive else None
         cpus = [p.cpu_percent for p in match.processes if p.cpu_percent is not None]
         mems = [p.memory_bytes for p in match.processes if p.memory_bytes is not None]
         status.cpu_percent = round(sum(cpus), 1) if cpus else None
@@ -318,10 +326,13 @@ class ServersModule(Module):
 
         async with lock:
             started = time.time()
+            refused: OperationRefused | None = None
             try:
                 handler = {"server_start": self._start, "server_stop": self._stop, "server_restart": self._restart}[operation]
                 message, details = await handler(record, status)
                 ok = True
+            except OperationRefused as exc:
+                refused, message, details, ok = exc, str(exc), {}, False
             except OperationError as exc:
                 message, details, ok = str(exc), {}, False
             except Exception as exc:
@@ -329,6 +340,11 @@ class ServersModule(Module):
                 message, details, ok = f"Erro inesperado: {type(exc).__name__}: {exc}", {}, False
             finally:
                 status.operation = None
+
+            if refused is not None:
+                await self._audit.record(actor=actor, operation=operation, target=record.name, reason=reason,
+                                         result="refused", details={"message": message})
+                raise refused
 
             result = {
                 "ok": ok,
@@ -373,15 +389,21 @@ class ServersModule(Module):
         recent.append(now)
 
     async def _start(self, record: ServerRecord, status: ServerStatus) -> tuple[str, dict[str, Any]]:
-        match = await self._fresh_match(record)
+        listeners = await asyncio.to_thread(listening_ports) if record.port else {}
+        match = await self._fresh_match(record, listeners)
         if match.alive:
-            raise OperationError(f"'{record.name}' já está em execução (PID {match.main_pid})")
+            how = f", usando a porta {record.port}" if match.source == "port" else ""
+            raise OperationRefused(
+                f"'{record.name}' já está em execução (PID {match.main_pid}{how}) — provavelmente foi aberto fora do Sentinel"
+            )
+        if record.port and record.port in listeners:
+            raise OperationRefused(f"A porta {record.port} já está em uso por outro processo; iniciar uma segunda cópia falharia")
         try:
             validate_executable(record.executable or "", check_exists=True)
         except ValueError as exc:
-            raise OperationError(str(exc)) from exc
+            raise OperationRefused(str(exc)) from exc
         if record.working_directory and not Path(record.working_directory).is_dir():
-            raise OperationError(f"Diretório de trabalho não encontrado: {record.working_directory}")
+            raise OperationRefused(f"Diretório de trabalho não encontrado: {record.working_directory}")
 
         status.operation = "server_start"
         if status.state is not ServerState.RESTARTING:
@@ -404,9 +426,17 @@ class ServersModule(Module):
         assert self._ctx is not None
         match = await self._fresh_match(record)
         if not match.alive:
-            raise OperationError(f"'{record.name}' não está em execução")
+            raise OperationRefused(f"'{record.name}' não está em execução")
+        if match.source == "port" and not record.is_script:
+            owner = next((p for p in match.processes if p.pid == match.main_pid), None)
+            if owner is None or not _same_executable(record.executable, owner.exe):
+                raise OperationRefused(
+                    f"O processo na porta {record.port} ({_exe_name(owner.exe or owner.name) if owner else 'desconhecido'}) "
+                    f"não é o executável cadastrado ({_exe_name(record.executable)}). "
+                    "Ajuste 'Como reconhecer o processo' no cadastro antes de parar."
+                )
         if match.too_broad:
-            raise OperationError(f"O critério de reconhecimento de '{record.name}' encontrou {len(match.pids)} processos; refine-o antes de parar")
+            raise OperationRefused(f"O critério de reconhecimento de '{record.name}' encontrou {len(match.pids)} processos; refine-o antes de parar")
         roots = [p for p in match.processes if p.ppid not in set(match.pids)]
         for proc in roots:
             try:
@@ -414,7 +444,7 @@ class ServersModule(Module):
             except psutil.NoSuchProcess:
                 continue
             if reason:
-                raise OperationError(f"Recusado: PID {proc.pid} — {reason}")
+                raise OperationRefused(f"Recusado: PID {proc.pid} — {reason}")
         status.operation = status.operation or "server_stop"
         status.planned_down = True
         stopped, forced = [], []
@@ -493,7 +523,7 @@ class ServersModule(Module):
         processes = await asyncio.to_thread(self._fresh.collect)
         if listeners is None:
             listeners = await asyncio.to_thread(listening_ports) if record.port else {}
-        return find_server_processes(processes, record.effective_match(), record.port, listeners)
+        return identify_server(processes, record.effective_match(), record.port, listeners)
 
     def _capture_log(self, record: ServerRecord) -> Path:
         assert self._ctx is not None
@@ -513,6 +543,26 @@ class ServersModule(Module):
 
 
 _OP_LABELS = {"server_start": "Iniciar", "server_stop": "Parar", "server_restart": "Reiniciar"}
+
+
+def _exe_name(path: str | None) -> str:
+    import ntpath
+
+    return ntpath.basename(path or "").lower()
+
+
+def _same_executable(registered: str | None, actual: str | None) -> bool:
+    """Mesmo programa: caminho real igual (resolvendo atalhos/symlinks) ou mesmo nome de arquivo."""
+    import os
+
+    if not registered or not actual:
+        return False
+    try:
+        if os.path.normcase(os.path.realpath(registered)) == os.path.normcase(os.path.realpath(actual)):
+            return True
+    except OSError:
+        pass
+    return _exe_name(registered) == _exe_name(actual)
 
 
 def _severity(record: ServerRecord, state: ServerState) -> Severity:

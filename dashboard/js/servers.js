@@ -28,6 +28,18 @@ function field(label, value) {
   return [h("dt", { text: label }), h("dd", {}, value ?? fmt.DASH)];
 }
 
+// Explica como o processo foi reconhecido e quem está usando a porta.
+function portNote(s, st) {
+  if (st.match_source === "port") {
+    const owner = st.port_owners?.[0];
+    return h("p", { class: "secondary small", text: `Reconhecido pela porta ${s.port}${owner?.name ? ` (processo ${owner.name})` : ""}: o processo não bate com o executável/argumentos cadastrados — provavelmente foi aberto fora do Sentinel.` });
+  }
+  if (!s.port || st.pids.length) return null;
+  if (st.port_owners === null) return h("p", { class: "muted small", text: `Porta ${s.port} livre: nada está escutando nela.` });
+  const names = st.port_owners.map((o) => `${o.name || "processo"} (PID ${o.pid})`).join(", ");
+  return h("p", { class: "secondary small", text: `Porta ${s.port} em uso por ${names || "um processo sem acesso"}.` });
+}
+
 function message(text, kind = "info") {
   return h("div", { class: `form-message form-message-${kind}`, role: kind === "error" ? "alert" : "status", text });
 }
@@ -96,6 +108,7 @@ function serverCard(item, refresh) {
       ? h("p", { class: "muted small", text: "Processo ativo, mas a saúde não é verificada (configure porta, TCP ou HTTP)." })
       : null,
     st.last_check?.error && st.state !== "online" ? h("p", { class: "secondary small", text: st.last_check.error }) : null,
+    portNote(s, st),
     st.warning ? h("p", { class: "secondary small", text: `Atenção: ${st.warning}` }) : null,
     actionButtons(s, st, refresh));
 }
@@ -309,6 +322,7 @@ export async function serverDetailPage(view, id) {
         ...field("Memória", fmt.bytes(st.memory_bytes)),
         ...field("Ativo há", st.uptime_seconds != null ? fmt.duration(st.uptime_seconds) : null),
         ...field("Última operação", st.last_operation ? `${st.last_operation.message} (${fmt.dateTime(st.last_operation.at)})` : null)),
+        portNote(s, st),
         actionButtons(s, st, load))));
     checksBody.replaceChildren(...(checks.checks.length ? checks.checks.map((c) => h("tr", {},
       h("td", { class: "num", text: fmt.dateTime(c.timestamp) }),
