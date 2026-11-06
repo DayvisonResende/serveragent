@@ -27,6 +27,7 @@ from sentinel.core.exceptions import ModuleError
 from sentinel.core.module_registry import Module, ModuleHealth
 from sentinel.database.repositories import AuthRepository
 from sentinel.modules.monitor.store import FastSample, MetricsStore
+from sentinel.modules.servers.manager import ServersModule
 from sentinel.oslayer.sockets import bind_listener
 
 if TYPE_CHECKING:
@@ -52,10 +53,12 @@ class ApiModule(Module):
         store: MetricsStore,
         health_provider: Callable[[], dict[str, Any]],
         alerts_provider: Callable[[], list[dict[str, Any]]],
+        servers: ServersModule | None = None,
     ) -> None:
         self._store = store
         self._health = health_provider
         self._alerts = alerts_provider
+        self._servers = servers
         self.hub = WebSocketHub()
         self._server: _EmbeddedServer | None = None
         self._task: asyncio.Task[None] | None = None
@@ -80,6 +83,7 @@ class ApiModule(Module):
             hub=self.hub,
             health=self._health,
             alerts=self._alerts,
+            servers=self._servers,
         )
         config = uvicorn.Config(
             create_app(deps),
@@ -161,5 +165,6 @@ class ApiModule(Module):
                 "data": sample.as_dict(),
                 "resources": self._context.resources.snapshot(),
                 "alerts": self._alerts(),
+                "servers": self._servers.snapshot() if self._servers else [],
             }
         )

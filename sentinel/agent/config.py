@@ -107,6 +107,17 @@ class ResourceSettings(_Section):
     hysteresis_percent: float = Field(10, ge=0, le=50)
 
 
+class ServersSettings(_Section):
+    """Gerenciamento de servidores (PRD 6)."""
+
+    check_interval_seconds: float = Field(15, ge=5, le=600)
+    failure_threshold: int = Field(2, ge=1, le=10)  # falhas seguidas antes de rebaixar o estado
+    check_concurrency: int = Field(4, ge=1, le=16)
+    stop_timeout_seconds: float = Field(10, ge=1, le=120)
+    operations_per_window: int = Field(5, ge=1, le=50)  # limite de operações por servidor...
+    operations_window_seconds: float = Field(600, ge=60, le=86_400)  # ...nesta janela
+
+
 class RetentionSettings(_Section):
     """Retenção por categoria (PRD 16.2). Executada diariamente."""
 
@@ -114,6 +125,7 @@ class RetentionSettings(_Section):
     process_snapshots_days: int = Field(7, ge=1, le=3650)
     disk_history_days: int = Field(365, ge=7, le=3650)
     events_days: int = Field(90, ge=7, le=3650)
+    server_checks_days: int = Field(7, ge=1, le=365)
 
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -145,6 +157,7 @@ class Settings(_Section):
     monitoring: MonitoringSettings = MonitoringSettings()
     alerts: AlertSettings = AlertSettings()
     resources: ResourceSettings = ResourceSettings()
+    servers: ServersSettings = ServersSettings()
     retention: RetentionSettings = RetentionSettings()
     api: ApiSettings = ApiSettings()
 

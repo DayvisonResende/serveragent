@@ -7,7 +7,7 @@ base de comparação, então sua CPU é ``None`` — nunca um 0 inventado.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal, TypeVar
 
@@ -18,6 +18,8 @@ from sentinel.core.clock import to_iso
 SortKey = Literal["cpu", "memory", "name", "runtime"]
 
 _T = TypeVar("_T")
+# nome, caminho, usuário, pai, linha de comando — fixos durante a vida do processo
+_Static = tuple[str | None, str | None, str | None, int | None, tuple[str, ...] | None]
 
 
 def _safe(getter: Callable[[], _T]) -> _T | None:
@@ -40,9 +42,15 @@ class ProcessInfo:
     cpu_percent: float | None
     memory_bytes: int | None
     memory_percent: float | None
+    # Uso interno (reconhecer servidores). A linha de comando pode conter senhas/tokens,
+    # então NUNCA é exposta pela API.
+    ppid: int | None = field(default=None, repr=False)
+    cmdline: tuple[str, ...] | None = field(default=None, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data.pop("cmdline")
+        return data
 
 
 class ProcessCollector:
@@ -54,7 +62,7 @@ class ProcessCollector:
     def __init__(self) -> None:
         self._cpu_count = psutil.cpu_count(logical=True) or 1
         self._seen: set[tuple[int, float | None]] = set()
-        self._static: dict[tuple[int, float | None], tuple[str | None, str | None, str | None]] = {}
+        self._static: dict[tuple[int, float | None], _Static] = {}
 
     def collect(self) -> list[ProcessInfo]:
         total_memory = psutil.virtual_memory().total
@@ -72,7 +80,14 @@ class ProcessCollector:
                 with proc.oneshot():
                     static = self._static.get(identity)
                     if static is None:
-                        static = (_safe(proc.name), _safe(proc.exe), _safe(proc.username))
+                        cmd = _safe(proc.cmdline)
+                        static = (
+                            _safe(proc.name),
+                            _safe(proc.exe),
+                            _safe(proc.username),
+                            _safe(proc.ppid),
+                            tuple(a[:1000] for a in cmd[:100]) if cmd else None,
+                        )
                     mem = _safe(proc.memory_info)
                     status = _safe(proc.status)
                     raw_cpu = _safe(lambda: proc.cpu_percent(None))
@@ -80,7 +95,7 @@ class ProcessCollector:
                 continue  # encerrou durante a leitura: não aparece, em vez de aparecer com dados parciais
             current.add(identity)
             self._static[identity] = static
-            name, exe, username = static
+            name, exe, username, ppid, cmdline = static
             cpu = round(raw_cpu / self._cpu_count, 1) if raw_cpu is not None and identity in self._seen else None
             rss = mem.rss if mem is not None else None
             result.append(
@@ -95,6 +110,8 @@ class ProcessCollector:
                     cpu_percent=cpu,
                     memory_bytes=rss,
                     memory_percent=round(rss / total_memory * 100, 2) if rss is not None and total_memory else None,
+                    ppid=ppid,
+                    cmdline=cmdline,
                 )
             )
         self._seen = current

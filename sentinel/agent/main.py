@@ -7,6 +7,7 @@
     python -m sentinel dashboard     abre o dashboard no navegador (login de uso único)
     python -m sentinel stop          pede ao agente em execução que encerre de forma limpa
     python -m sentinel selfcheck     testa API, segurança, tempo real e gravação de métricas
+    python -m sentinel server list|start|stop|restart [nome]   consulta e opera servidores cadastrados
 """
 
 from __future__ import annotations
@@ -67,6 +68,10 @@ def main(argv: list[str] | None = None) -> int:
     stop_parser.add_argument("--timeout", type=float, default=20.0, help="segundos para aguardar o encerramento")
     check_parser = commands.add_parser("selfcheck", help="testa a API, a segurança e o tempo real do agente em execução")
     check_parser.add_argument("--json", action="store_true", help="saída em JSON (ASCII), para scripts")
+    check_parser.add_argument("--servers", choices=["prepare", "finish"], help="autoteste de servidores (usado pelo verificar.bat)")
+    srv = commands.add_parser("server", help="consulta e opera servidores cadastrados")
+    srv.add_argument("action", choices=["list", "start", "stop", "restart"])
+    srv.add_argument("name", nargs="?", help="nome do servidor (exceto em 'list')")
     args = parser.parse_args(argv)
 
     error_log_dir = DEFAULT_ERROR_LOG_DIR
@@ -80,7 +85,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "status":
             return cmd_status(settings, as_json=args.json)
         if args.command == "selfcheck":
-            return cmd_selfcheck(settings, as_json=args.json)
+            return cmd_selfcheck(settings, as_json=args.json, servers=args.servers)
+        if args.command == "server":
+            return cmd_server(settings, args.action, args.name)
         if args.command == "stop":
             return cmd_stop(settings, args.timeout)
         if args.command == "dashboard":
@@ -136,14 +143,16 @@ def build_agent(settings: Settings) -> Agent:
     """Raiz de composição: cria o agente e conecta os módulos."""
     from sentinel.api.server import ApiModule
     from sentinel.modules.monitor import MetricsStore, MonitorModule
+    from sentinel.modules.servers.manager import ServersModule
 
     m = settings.monitoring
     store = MetricsStore(live_capacity=int(m.live_history_seconds / m.fast_interval_seconds) + 1)
     monitor = MonitorModule(store)
-    agent = Agent(settings, modules=[monitor])
+    servers = ServersModule(store)
+    agent = Agent(settings, modules=[monitor, servers])
     if settings.api.enabled:
         agent.registry.register(
-            ApiModule(store, agent.health_report, lambda: monitor.alerts.active() if monitor.alerts else [])
+            ApiModule(store, agent.health_report, lambda: monitor.alerts.active() if monitor.alerts else [], servers)
         )
     return agent
 
@@ -167,17 +176,59 @@ async def _run_agent(settings: Settings) -> None:
         listener.stop()
 
 
-def cmd_selfcheck(settings: Settings, as_json: bool = False) -> int:
+def cmd_selfcheck(settings: Settings, as_json: bool = False, servers: str | None = None) -> int:
+    from sentinel.agent.selfcheck import Check, run_selfcheck
     from sentinel.agent.selfcheck import as_json as checks_json
-    from sentinel.agent.selfcheck import run_selfcheck
 
-    checks = run_selfcheck(settings)
+    if servers:
+        from sentinel.agent import server_selftest
+
+        try:
+            checks = server_selftest.prepare(settings) if servers == "prepare" else server_selftest.finish(settings)
+        except Exception as exc:  # o relatório precisa mostrar a falha, não um traceback
+            checks = [Check(f"Autoteste de servidores ({servers})", False, f"{type(exc).__name__}: {exc}")]
+    else:
+        checks = run_selfcheck(settings)
     if as_json:
         print(checks_json(checks))
     else:
         for c in checks:
             print(f"[{'OK' if c.ok else 'FALHA':5}] {c.name} - {c.detail}")
     return EXIT_OK if checks and all(c.ok for c in checks) else EXIT_ERROR
+
+
+def cmd_server(settings: Settings, action: str, name: str | None) -> int:
+    from sentinel.agent.client import ApiError, LocalClient
+
+    client = LocalClient(settings)
+    try:
+        data = client.request("GET", "/api/v1/servers")
+    except (ApiError, OSError) as exc:
+        print(f"Não foi possível consultar o agente: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    if action == "list":
+        if not data["servers"]:
+            print("Nenhum servidor cadastrado.")
+        for item in data["servers"]:
+            srv, st = item["server"], item["status"]
+            print(f"{srv['name']:<30} {st['state_label']:<15} {srv['management']:<9} porta {srv['port'] or '-':<6} PID {st['main_pid'] or '-'}")
+        return EXIT_OK
+    if not name:
+        print("Informe o nome do servidor.", file=sys.stderr)
+        return EXIT_ERROR
+    match = next((i for i in data["servers"] if i["server"]["name"].lower() == name.lower()), None)
+    if match is None:
+        print(f"Servidor '{name}' não encontrado.", file=sys.stderr)
+        return EXIT_ERROR
+    try:
+        result = client.request("POST", f"/api/v1/servers/{match['server']['id']}/actions/{action}", {"reason": "linha de comando"})
+    except ApiError as exc:
+        print(f"Recusado: {exc.detail}", file=sys.stderr)
+        return EXIT_ERROR
+    print(result["message"])
+    if result.get("warning"):
+        print(f"Atenção: {result['warning']}")
+    return EXIT_OK if result["ok"] else EXIT_ERROR
 
 
 def cmd_stop(settings: Settings, timeout: float = 20.0) -> int:

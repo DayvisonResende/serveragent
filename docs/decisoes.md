@@ -72,12 +72,23 @@ segundo e encerra limpo. Assim instalação, atualização e desinstalação nã
 falsos "encerramentos inesperados". O desligamento do Windows é tratado por uma
 janela oculta (`oslayer/shutdown_listener.py`) e registrado como `system_shutdown`.
 
+## D10 — Operações de servidor: conjunto fechado, autorizadas pelo usuário
+
+Só existem `server_start`, `server_stop` e `server_restart`, sobre servidores
+*gerenciados*. O cadastro recusa interpretadores de comandos como executável, o
+que impede transformar "cadastrar servidor" em "executar qualquer comando".
+Até a Fase 4, o usuário autenticado é o aprovador (confirmação explícita); depois,
+as mesmas operações passam pelas aprovações — inclusive quando pedidas pela IA.
+
+## D11 — Servidores desacoplados do Sentinel
+
+Servidores iniciados pelo Sentinel usam `CREATE_BREAKAWAY_FROM_JOB` (Windows) ou
+nova sessão (POSIX). Se o Windows recusar, a operação avisa explicitamente que o
+servidor pode morrer junto com o Sentinel — nunca em silêncio. O `verificar.bat`
+testa isso encerrando o agente à força com um servidor de teste rodando.
+
 ## Decisões futuras já identificadas
 
-- **Fase 3 — Servidores sobrevivendo ao Sentinel (critério 12 do MVP):** iniciar
-  processos com `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP |
-  CREATE_BREAKAWAY_FROM_JOB`, pois a tarefa agendada roda num *job object* que
-  pode encerrar toda a árvore de processos. Validar no Windows real.
 - **Fase 4 — Aprovações:** vincular cada aprovação a um hash de
   (operação + alvo + parâmetros), revalidado pelo executor.
 - **Inicialização sem logon:** a tarefa atual inicia no logon do usuário. Para

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +20,9 @@ from sentinel.api.websocket import WebSocketHub
 from sentinel.core.resource_manager import ResourceManager
 from sentinel.database.database import Database
 from sentinel.modules.monitor.store import MetricsStore
+
+if TYPE_CHECKING:
+    from sentinel.modules.servers.manager import ServersModule
 
 DASHBOARD_DIR = Path(__file__).resolve().parents[2] / "dashboard"
 
@@ -34,6 +37,7 @@ class ApiDeps:
     hub: WebSocketHub
     health: Callable[[], dict[str, Any]]
     alerts: Callable[[], list[dict[str, Any]]]
+    servers: ServersModule | None = None
 
 
 def get_deps(request: Request) -> ApiDeps:
@@ -47,7 +51,7 @@ async def require_session(request: Request) -> None:
 
 
 def create_app(deps: ApiDeps, dashboard_dir: Path = DASHBOARD_DIR) -> FastAPI:
-    from sentinel.api.routes import auth, events, system
+    from sentinel.api.routes import auth, events, servers, system
 
     app = FastAPI(
         title="Sentinel",
@@ -67,6 +71,7 @@ def create_app(deps: ApiDeps, dashboard_dir: Path = DASHBOARD_DIR) -> FastAPI:
     app.include_router(auth.router, dependencies=protected)
     app.include_router(system.router, dependencies=protected)
     app.include_router(events.router, dependencies=protected)
+    app.include_router(servers.router, dependencies=protected)
     app.include_router(events.ws_router)  # autenticação feita no handshake
 
     app.mount("/", StaticFiles(directory=dashboard_dir, html=True), name="dashboard")

@@ -154,6 +154,39 @@ details.data-table summary { cursor: pointer; color: var(--text-muted); }
 .notice { max-width: 480px; padding: 32px; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); }
 .notice h1 { margin-bottom: 12px; }
 
+/* ---------- servidores e formulários ---------- */
+.servers-grid { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+.server-card h2 a { text-decoration: none; }
+.server-card h2 a:hover { text-decoration: underline; }
+.server-counts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+.server-counts .value { font-size: 22px; font-weight: 600; }
+.server-list { list-style: none; margin: 0; padding: 0; }
+.server-list li { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-top: 1px solid var(--grid); }
+.small { font-size: 12px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); font: inherit; font-size: 13px; cursor: pointer; text-decoration: none; }
+.btn:hover:not([disabled]) { border-color: var(--text-muted); }
+.btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+.btn-danger { border-color: var(--status-critical); }
+.btn-small { padding: 2px 10px; font-size: 12px; }
+.op-result { margin-top: 8px; }
+.card .actions { margin-top: 12px; }
+.title-row { display: flex; align-items: center; gap: 12px; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px 20px; }
+.form-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.form-field label { color: var(--text-secondary); font-size: 13px; }
+.form-wide { grid-column: 1 / -1; }
+.form-grid input:not([type="checkbox"]), .form-grid textarea, .form-grid select { background: var(--surface-2); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font: inherit; width: 100%; }
+.form-grid textarea { font-family: ui-monospace, Consolas, monospace; resize: vertical; }
+.form-grid details summary { cursor: pointer; color: var(--text-secondary); }
+.form-grid details[open] { display: grid; gap: 10px; }
+.check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); }
+.form-message { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); white-space: pre-line; margin: 8px 0; }
+.form-message-error { border-color: var(--status-critical); }
+.form-message-ok { border-color: var(--status-good); }
+.log-view { background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 10px; max-height: 420px; overflow: auto; font: 12px/1.45 ui-monospace, Consolas, monospace; color: var(--text-secondary); white-space: pre-wrap; word-break: break-all; }
+
 @media (max-width: 640px) {
   .topbar { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
   .nav { order: 3; flex-basis: 100%; }

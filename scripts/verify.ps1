@@ -11,7 +11,8 @@
       4. Parada limpa (sentinel stop) e reinício pela tarefa
       5. Detecção de encerramento forçado (para e reinicia a tarefa)
       6. API, segurança, login, tempo real e gravação de métricas (sentinel selfcheck)
-      7. Consumo de memória e CPU do processo real do agente (após 60 s de aquecimento)
+      7. Servidores: cadastro, início, queda, incidente, reinício e independência do Sentinel
+      8. Consumo de memória e CPU do processo real do agente (após 60 s de aquecimento)
     O relatório é salvo em logs\verificacao-AAAAMMDD-HHMMSS.txt e aberto no Bloco de Notas.
     A verificação de reinício do computador continua manual.
 #>
@@ -213,8 +214,37 @@ try {
     }
     Write-Report ""
 
-    # 7. Recursos --------------------------------------------------------------
-    Write-Report "== 7. Consumo de recursos (amostra de 60 s, após aquecimento) =="
+    # 7. Servidores ------------------------------------------------------------
+    Write-Report "== 7. Servidores (servidor de teste temporário) =="
+    function Add-Checks([string]$Raw, [string]$What) {
+        try { foreach ($c in ($Raw | ConvertFrom-Json)) { Add-Result $c.name ([bool]$c.ok) $c.detail } }
+        catch { Add-Result $What $false ("Saída inválida: " + $Raw.Trim()) }
+    }
+    Add-Checks (& $Py -m sentinel selfcheck --json --servers prepare 2>$null | Out-String) "Autoteste de servidores (preparo)"
+    $statePath = Join-Path $Root "data\selftest\state.json"
+    $selftest = $null
+    if (Test-Path $statePath) { $selftest = Get-Content $statePath -Raw | ConvertFrom-Json }
+    if ($null -ne $task -and $null -ne $selftest -and $selftest.pid) {
+        $before = Get-Status
+        Write-Report "  Encerrando o Sentinel à força (Stop-ScheduledTask) com o servidor de teste rodando..."
+        Stop-ScheduledTask -TaskName $TaskName
+        Start-Sleep -Seconds 3
+        $survivor = Get-Process -Id ([int]$selftest.pid) -ErrorAction SilentlyContinue
+        Add-Result "Servidor continua rodando com o Sentinel encerrado à força (MVP 12)" ($null -ne $survivor) "PID $($selftest.pid)"
+        Start-ScheduledTask -TaskName $TaskName
+        $back = Wait-Until 60 {
+            $s = Get-Status
+            if ($null -ne $s -and $s.latest_run.id -gt $before.latest_run.id -and $s.latest_run.state -eq "running") { $s }
+        }
+        Add-Result "Sentinel voltou" ($null -ne $back) $(if ($back) { "execução #$($back.latest_run.id)" } else { "não voltou em 60 s" })
+        Add-Checks (& $Py -m sentinel selfcheck --json --servers finish 2>$null | Out-String) "Autoteste de servidores (conclusão)"
+    } else {
+        Add-Result "Independência dos servidores" $false "Pulado: preparo falhou ou tarefa inexistente."
+    }
+    Write-Report ""
+
+    # 8. Recursos --------------------------------------------------------------
+    Write-Report "== 8. Consumo de recursos (amostra de 60 s, após aquecimento) =="
     $current = Get-Status
     # A partida (importações, primeira leitura de processos) não representa o repouso.
     if ($current -and $current.latest_run) {

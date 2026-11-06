@@ -62,11 +62,20 @@ resources:                          # modo de baixa prioridade (PRD 13.3)
   smoothing_samples: 6              # média das últimas 6 amostras (30 s)
   hysteresis_percent: 10
 
+servers:                            # gerenciamento de servidores (PRD 6)
+  check_interval_seconds: 15
+  failure_threshold: 2              # falhas seguidas antes de declarar problema (evita alarme falso)
+  check_concurrency: 4
+  stop_timeout_seconds: 10          # espera antes de forçar o encerramento
+  operations_per_window: 5          # no máximo 5 operações por servidor...
+  operations_window_seconds: 600    # ...a cada 10 minutos (evita ciclos de reinício)
+
 retention:                          # dias mantidos por categoria (PRD 16.2)
   metrics_days: 30
   process_snapshots_days: 7
   disk_history_days: 365
   events_days: 90
+  server_checks_days: 7
 
 api:
   enabled: true

@@ -3,11 +3,11 @@
 Agente local de administração, monitoramento e manutenção de servidores Windows.
 Especificação completa em [PRD.md](PRD.md).
 
-**Estado atual:** Fase 2 — Monitoramento. O agente coleta CPU, memória, disco,
-rede, temperatura (quando disponível) e processos; grava histórico; gera
-alertas; reduz o próprio ritmo quando o computador está sob carga; e serve um
-dashboard local protegido. Ainda não há gerenciamento de servidores, aprovações
-ou IA (Fases 3–5).
+**Estado atual:** Fase 3 — Servidores. Além do monitoramento do computador
+(Fase 2), o Sentinel cadastra servidores, verifica a saúde deles, registra
+incidentes, mostra logs e inicia/para/reinicia servidores gerenciados — sempre a
+pedido do usuário. Servidores continuam rodando se o Sentinel for encerrado.
+Ainda não há aprovações nem IA (Fases 4–5).
 
 ## Requisitos
 
@@ -50,6 +50,8 @@ python -m sentinel check-config   # valida e mostra a configuração efetiva
 python -m sentinel dashboard      # abre o dashboard em http://127.0.0.1:8765 com login de uso único
 python -m sentinel stop           # pede ao agente que encerre de forma limpa
 python -m sentinel selfcheck      # testa API, segurança, tempo real e gravação de métricas
+python -m sentinel server list    # servidores cadastrados e seus estados
+python -m sentinel server restart <nome>   # também: start, stop
 ```
 
 Códigos de saída: `0` ok · `1` erro · `2` configuração · `3` outra instância em execução · `4` banco.
@@ -71,7 +73,7 @@ python -m venv .venv
 sentinel/
   agent/        CLI, configuração, ciclo de vida, agendador, logs, saúde, autoverificação
   core/         barramento de eventos, módulos, estado, gerenciador de recursos, exceções
-  modules/      módulos funcionais (monitor)
+  modules/      módulos funcionais (monitor, servers)
   api/          API local FastAPI + WebSocket, segurança
   oslayer/      tudo que é específico do sistema operacional
   database/     conexão SQLite, migrações versionadas, repositórios

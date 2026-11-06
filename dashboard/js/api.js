@@ -48,3 +48,35 @@ export class LiveChannel {
     if (this.ws) this.ws.close();
   }
 }
+
+export class ApiError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// Erros de validação do servidor viram uma mensagem legível em português.
+function describeError(detail) {
+  if (Array.isArray(detail)) {
+    return detail.map((d) => {
+      const field = (d.loc || []).filter((x) => x !== "body").join(".");
+      const msg = String(d.msg || "").replace(/^Value error, /, "");
+      return field ? `${field}: ${msg}` : msg;
+    }).join("\n");
+  }
+  return typeof detail === "string" ? detail : JSON.stringify(detail);
+}
+
+export async function sendJSON(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    credentials: "same-origin",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (res.status === 401) throw new UnauthorizedError("Sessão ausente ou expirada");
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) throw new ApiError(res.status, describeError(data?.detail ?? res.statusText));
+  return data;
+}

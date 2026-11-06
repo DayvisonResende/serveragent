@@ -43,7 +43,7 @@ def test_init_prepares_database_and_is_idempotent(tmp_path, capsys):
     config = make_config(tmp_path)
     assert main(["--config", str(config), "init"]) == EXIT_OK
     out = capsys.readouterr().out
-    assert "existente" in out and "0001, 0002" in out and "Integridade  : ok" in out
+    assert "existente" in out and "0001, 0002, 0003" in out and "Integridade  : ok" in out
     assert (tmp_path / "data" / "sentinel.db").exists()
     assert main(["--config", str(config), "init"]) == EXIT_OK
     assert "nenhuma pendente" in capsys.readouterr().out

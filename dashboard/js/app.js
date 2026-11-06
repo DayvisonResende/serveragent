@@ -4,6 +4,8 @@
 import { getJSON, logout, LiveChannel, UnauthorizedError } from "./api.js";
 import { LineChart, legend, dataTable } from "./chart.js";
 import * as fmt from "./format.js";
+import { h, card, meter, setMeter, severityBadge } from "./ui.js";
+import { serversPage, serverFormPage, serverDetailPage, statePill, summarize } from "./servers.js";
 
 const view = document.getElementById("view");
 const banner = document.getElementById("banner");
@@ -19,44 +21,11 @@ const NET = [
   { key: "up", label: "Upload", slot: 2 },
 ];
 
-const state = { live: [], latest: null, alerts: [], resources: null };
+const state = { live: [], latest: null, alerts: [], resources: null, servers: null };
 let page = null;
 let channel = null;
 
 // ---------------------------------------------------------------- utilidades
-
-function h(tag, props = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(props)) {
-    if (v == null || v === false) continue;
-    if (k === "class") node.className = v;
-    else if (k === "text") node.textContent = v;
-    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else node.setAttribute(k, v === true ? "" : v);
-  }
-  for (const c of children.flat()) if (c != null) node.append(c instanceof Node ? c : String(c));
-  return node;
-}
-
-function card(title, ...body) {
-  return h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: title })), ...body);
-}
-
-function meter(value) {
-  const fill = h("span");
-  fill.style.setProperty("width", `${Math.max(0, Math.min(100, value || 0))}%`);
-  return h("div", { class: "meter", role: "meter", "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": value ?? 0 }, fill);
-}
-
-function setMeter(node, value) {
-  node.setAttribute("aria-valuenow", value ?? 0);
-  node.firstChild.style.setProperty("width", `${Math.max(0, Math.min(100, value || 0))}%`);
-}
-
-function severityBadge(sev) {
-  const s = fmt.SEVERITY[sev] || fmt.SEVERITY.info;
-  return h("span", { class: `sev sev-${sev}` }, h("span", { class: "sev-icon", "aria-hidden": "true", text: s.icon }), s.label);
-}
 
 function chartTime(longRange) {
   return (t, detailed) => {
@@ -108,6 +77,7 @@ function onLiveMessage(msg) {
     const cutoff = d.ts_epoch - LIVE_WINDOW;
     while (state.live.length && state.live[0].t < cutoff) state.live.shift();
     page?.onMetrics?.(d);
+    if (msg.servers) { state.servers = msg.servers; page?.onServers?.(msg.servers); }
   } else if (msg.type === "event") {
     page?.onEvent?.(msg.data);
   }
@@ -171,10 +141,11 @@ function summaryLine(node, items) {
 // ---------------------------------------------------------------- páginas
 
 async function overviewPage() {
-  const [status, metrics, events] = await Promise.all([
+  const [status, metrics, events, servers] = await Promise.all([
     getJSON("/api/v1/system/status"),
     getJSON("/api/v1/system/metrics?range=15m"),
     getJSON("/api/v1/events?limit=12"),
+    getJSON("/api/v1/servers").catch(() => null),
   ]);
   if (!state.live.length) state.live = metrics.points;
   state.alerts = status.alerts;
@@ -187,6 +158,19 @@ async function overviewPage() {
   const cpuRam = percentChart("CPU e memória — últimos 15 min");
   const net = networkChart("Rede — últimos 15 min");
   const agentBox = h("div");
+  const serversBox = h("div");
+  const paintServers = (list) => {
+    if (!list) { serversBox.replaceChildren(h("p", { class: "muted", text: "Módulo de servidores indisponível." })); return; }
+    const c = summarize(list);
+    serversBox.replaceChildren(
+      h("div", { class: "server-counts" },
+        ...[["Total", c.total], ["Online", c.online], ["Offline", c.offline], ["Com problemas", c.problems]].map(([label, n]) =>
+          h("div", {}, h("div", { class: "value num", text: String(n) }), h("div", { class: "muted small", text: label })))),
+      list.length
+        ? h("ul", { class: "server-list" }, ...list.map((i) => h("li", {}, h("a", { href: `#/servidores/${i.server.id}`, text: i.server.name }), statePill(i.status.state))))
+        : h("p", { class: "muted", text: "Nenhum servidor cadastrado." }, " ", h("a", { href: "#/servidores/novo", text: "Cadastrar" })));
+  };
+  paintServers(servers ? servers.servers : null);
   const activity = h("ul", { class: "events" });
   for (const e of events.events) activity.append(eventItem(e));
   if (!events.events.length) activity.append(h("li", { class: "muted", text: "Nenhum evento registrado." }));
@@ -196,8 +180,9 @@ async function overviewPage() {
       h("span", { class: "muted", text: status.machine?.cpu_model || "" })),
     alerts.node,
     h("div", { class: "grid tiles" }, ...Object.values(t).map((x) => x.node)),
+    h("div", { class: "grid two" }, card("Servidores", serversBox), card("Atividade recente", activity)),
     h("div", { class: "grid two" }, cpuRam.node, net.node),
-    h("div", { class: "grid two" }, card("Estado do Sentinel", agentBox), card("Atividade recente", activity)),
+    card("Estado do Sentinel", agentBox),
   );
 
   let current = status;
@@ -241,6 +226,7 @@ async function overviewPage() {
 
   return {
     onMetrics: paintLive,
+    onServers: paintServers,
     onEvent: (e) => {
       if (activity.firstChild?.classList?.contains("muted")) activity.replaceChildren();
       activity.prepend(eventItem(e));
@@ -382,7 +368,7 @@ async function processesPage() {
   let filter = "";
   const body = h("tbody");
   const info = h("span", { class: "muted" });
-  const headers = [["name", "Nome"], ["pid", "PID"], ["cpu", "CPU"], ["memory", "Memória"], ["runtime", "Iniciado em"], [null, "Usuário"], [null, "Caminho"]];
+  const headers = [["name", "Nome"], ["pid", "PID"], ["cpu", "CPU"], ["memory", "Memória"], ["runtime", "Iniciado em"], [null, "Usuário"], [null, "Caminho"], [null, ""]];
   const headRow = h("tr");
   const load = async () => {
     const data = await getJSON(`/api/v1/system/processes?sort=${sort}&limit=1000`);
@@ -395,8 +381,9 @@ async function processesPage() {
       h("td", { class: "num", text: fmt.bytes(p.memory_bytes) }),
       h("td", { class: "num", text: fmt.dateTime(p.started_at) }),
       h("td", { class: "secondary", text: p.username || "sem acesso" }),
-      h("td", { class: "path", title: p.exe || "", text: p.exe || "sem acesso" }))));
-    if (!rows.length) body.replaceChildren(h("tr", {}, h("td", { colspan: 7, class: "muted", text: "Nenhum processo encontrado." })));
+      h("td", { class: "path", title: p.exe || "", text: p.exe || "sem acesso" }),
+      h("td", {}, h("a", { class: "btn btn-small", href: `#/servidores/novo?pid=${p.pid}`, title: "Cadastrar como servidor monitorado", text: "Monitorar" })))));
+    if (!rows.length) body.replaceChildren(h("tr", {}, h("td", { colspan: 8, class: "muted", text: "Nenhum processo encontrado." })));
   };
   const paintHead = () => headRow.replaceChildren(...headers.map(([key, label]) => {
     const numeric = ["pid", "cpu", "memory", "runtime"].includes(key);
@@ -434,15 +421,33 @@ async function historyPage() {
 
 // ---------------------------------------------------------------- roteamento
 
-const routes = { "/": overviewPage, "/sistema": systemPage, "/processos": processesPage, "/historico": historyPage };
+const routes = {
+  "/": overviewPage,
+  "/sistema": systemPage,
+  "/processos": processesPage,
+  "/historico": historyPage,
+  "/servidores": () => serversPage(view),
+};
+
+// Rotas com parâmetro: #/servidores/novo?pid=N, #/servidores/ID, #/servidores/ID/editar
+function resolve(hash) {
+  const [path, query] = hash.split("?");
+  const params = new URLSearchParams(query || "");
+  if (routes[path]) return { section: path, run: routes[path] };
+  let m;
+  if (path === "/servidores/novo") return { section: "/servidores", run: () => serverFormPage(view, { pid: params.get("pid") }) };
+  if ((m = path.match(/^\/servidores\/(\d+)\/editar$/))) return { section: "/servidores", run: () => serverFormPage(view, { id: Number(m[1]) }) };
+  if ((m = path.match(/^\/servidores\/(\d+)$/))) return { section: "/servidores", run: () => serverDetailPage(view, Number(m[1])) };
+  return { section: "/", run: routes["/"] };
+}
 
 async function navigate() {
-  const path = routes[location.hash.slice(1)] ? location.hash.slice(1) : "/";
-  for (const a of document.querySelectorAll(".nav a")) a.classList.toggle("active", a.dataset.route === path);
+  const { section, run } = resolve(location.hash.slice(1) || "/");
+  for (const a of document.querySelectorAll(".nav a")) a.classList.toggle("active", a.dataset.route === section);
   page?.destroy?.();
   page = null;
   try {
-    page = await routes[path]();
+    page = await run();
   } catch (err) {
     if (err instanceof UnauthorizedError) showUnauthorized();
     else { console.error(err); showError(err); }
