@@ -37,6 +37,7 @@ function saveConversation(id) {
 export function aiPill(status) {
   if (!status || status.available == null) return h("span", { class: "pill pill-muted", text: "Verificando" });
   if (status.busy) return h("span", { class: "pill pill-warning", text: "Respondendo" });
+  if (status.warming) return h("span", { class: "pill pill-warning", text: "Preparando" });
   return status.available
     ? h("span", { class: "pill pill-good", text: "Disponível" })
     : h("span", { class: "pill pill-critical", text: "Indisponível" });
@@ -156,6 +157,16 @@ export async function assistantPage(view) {
   paintStatus();
   await loadHistory();
   input.focus();
+
+  // Carrega o modelo e lê as instruções enquanto você digita: a primeira resposta sai mais rápido.
+  if (status?.available) {
+    status = { ...status, warming: true };
+    paintStatus();
+    sendJSON("POST", "/api/v1/ai/warmup").catch(() => null).finally(async () => {
+      status = await getJSON("/api/v1/ai/status").catch(() => ({ ...status, warming: false }));
+      paintStatus();
+    });
+  }
 
   const poll = setInterval(async () => {
     if (waiting) return;

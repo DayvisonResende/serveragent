@@ -43,6 +43,18 @@ async def ai_status(request: Request, refresh: bool = False) -> dict[str, Any]:
     return await module.refresh_status() if refresh else module.snapshot()
 
 
+@router.post("/ai/warmup")
+async def ai_warmup(request: Request) -> dict[str, Any]:
+    """Chamado ao abrir a página Assistente: prepara o modelo enquanto o usuário digita."""
+    module = _module(request)
+    assert module.assistant is not None
+    try:
+        return await module.assistant.warm_up()
+    except AIUnavailable as exc:
+        await module.refresh_status()
+        raise HTTPException(503, str(exc)) from exc
+
+
 @router.post("/chat")
 async def chat(request: Request, body: ChatRequest) -> dict[str, Any]:
     module = _module(request)

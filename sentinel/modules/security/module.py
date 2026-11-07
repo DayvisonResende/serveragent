@@ -153,7 +153,10 @@ class SecurityModule(Module):
                         changes.append(("added", row, None))
                 elif old["value"] != entry.value or old["reasons"] != reasons:
                     upserts.append(row)
-                    if not first_for_source:
+                    routine = old["reasons"] == reasons and autostart.is_routine_change(entry.location, old["value"], entry.value)
+                    if routine:
+                        log.info("Mudança rotineira na inicialização ignorada", extra={"item": entry.name, "valor": entry.value[:200]})
+                    elif not first_for_source:
                         changes.append(("changed", row, old["value"]))
                 else:
                     seen.append(key)

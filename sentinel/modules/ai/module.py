@@ -60,7 +60,8 @@ class AIModule(Module):
         return ModuleHealth(True, self.status["message"])
 
     def snapshot(self) -> dict[str, Any]:
-        return {**self.status, "busy": bool(self.assistant and self.assistant.busy)}
+        return {**self.status, "busy": bool(self.assistant and self.assistant.busy),
+                "warming": bool(self.assistant and self.assistant.warming)}
 
     async def refresh_status(self) -> dict[str, Any]:
         assert self._client is not None and self._ctx is not None

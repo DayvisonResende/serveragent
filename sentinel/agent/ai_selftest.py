@@ -34,6 +34,15 @@ def run(settings: Settings) -> list[Check]:
     if not status.get("available"):
         return checks
 
+    # Como ao abrir a página Assistente: prepara o modelo; a pergunta seguinte aproveita.
+    try:
+        warm = http.request("POST", "/api/v1/ai/warmup")
+        checks.append(Check("Aquecimento da IA (informativo)", True,
+                            f"{warm['segundos']:.0f} s para carregar o modelo e ler as instruções" if warm.get("aquecido")
+                            else "modelo já estava preparado"))
+    except (ApiError, OSError) as exc:
+        checks.append(Check("Aquecimento da IA", False, f"{type(exc).__name__}: {exc}"))
+
     started = time.monotonic()
     try:
         answer = http.request("POST", "/api/v1/chat", {"message": QUESTION, "conversation_id": CONVERSATION})
@@ -43,7 +52,7 @@ def run(settings: Settings) -> list[Check]:
     elapsed = time.monotonic() - started
     text = " ".join(str(answer.get("answer", "")).split())
     checks.append(Check("Chat com a IA (pergunta real)", bool(text),
-                        f"{elapsed:.0f} s, {answer.get('tokens_gerados', 0)} tokens · \"{text[:160]}{'…' if len(text) > 160 else ''}\""))
+                        f"{elapsed:.0f} s, {answer.get('tokens_lidos', 0)} tokens lidos, {answer.get('tokens_gerados', 0)} gerados · \"{text[:160]}{'…' if len(text) > 160 else ''}\""))
     used = [t["ferramenta"] for t in answer.get("ferramentas", []) if t.get("ok")]
     checks.append(Check("IA consultou dados reais (ferramentas)", bool(used),
                         ", ".join(used) if used else "respondeu sem consultar nenhuma ferramenta"))

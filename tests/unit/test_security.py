@@ -273,3 +273,50 @@ def test_source_that_failed_first_is_baselined_later_without_false_alarms(tmp_pa
     assert any(t.startswith("Linha de base") for t in titles2)
     assert s2["failed_sources"] == [] and "registro (parcial)" in s2["errors"][0]
     assert not any(t.startswith("Item removido") for t, _ in e3)  # tarefas falharam: nada é dado como removido
+
+
+SVC = r"C:\Windows\System32\svchost.exe -k netsvcs -p"
+
+
+@pytest.mark.parametrize("old,new,routine", [
+    (f"{SVC} [início: automatic]", f"{SVC} [início: manual]", True),      # BITS e o Windows Update
+    (f"{SVC} [início: manual]", f"{SVC} [início: automatic]", True),
+    (f"{SVC} [início: disabled]", f"{SVC} [início: automatic]", False),   # ativar serviço desligado: alerta
+    (f"{SVC} [início: manual]", r"C:\Users\D\AppData\x.exe [início: manual]", False),  # programa trocado
+    (r"C:\Program Files\App\svc.exe [início: manual]", r"C:\Program Files\App\svc.exe [início: automatic]", False),
+])
+def test_routine_service_start_type_changes(old, new, routine):
+    from sentinel.oslayer import autostart
+
+    assert autostart.is_routine_change("Serviço", old, new) is routine
+    assert autostart.is_routine_change("HKCU\\Run", old, new) is False
+
+
+def test_bits_flipping_does_not_raise_alerts(tmp_path, monkeypatch):
+    from sentinel.database.repositories.autostart import AutostartRepository
+    from sentinel.modules.security.module import SecurityModule
+    from sentinel.oslayer import autostart
+
+    snapshots = [[E("Serviço", "BITS", f"{SVC} [início: {t}]")] for t in ("automatic", "manual", "automatic", "disabled")]
+    monkeypatch.setattr(autostart, "collect", lambda: autostart.CollectResult(snapshots.pop(0), set(), [], {"serviços"}))
+
+    async def scenario():
+        db = Database(tmp_path / "b.db")
+        await db.open()
+        await apply_migrations(db)
+        bus = EventBus()
+        module = SecurityModule(servers=None)  # type: ignore[arg-type]
+        module._ctx = SimpleNamespace(event_bus=bus, database=db)
+        module._autostart_repo = AutostartRepository(db)
+        titles = []
+        for _ in range(4):
+            await module.scan_autostart()
+            titles.append([e.title for e in (bus._queue.get_nowait() for _ in range(bus._queue.qsize()))])
+        value = (await module.autostart_entries())[0]["value"]
+        await db.close()
+        return titles, value
+
+    titles, value = asyncio.run(scenario())
+    assert titles[1] == [] and titles[2] == []  # automático ↔ manual: silencioso
+    assert titles[3] == ["Item da inicialização automática alterado: BITS"]  # desativado: avisa
+    assert value.endswith("[início: disabled]")  # a linha de base acompanha as mudanças

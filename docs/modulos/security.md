@@ -52,3 +52,6 @@ componente do sistema com arquivo em AppData/Temp/Users\Public.
 **Testes:** `test_security.py`, `test_servers_e2e.py` (fluxo queda → aprovação → reinício).
 **Limitações:** sem operações nível 3 ainda; tarefas/serviços que a conta limitada não
 enxerga ficam de fora; não substitui um antivírus (PRD 1.4).
+
+Trocas de início automático ↔ manual de serviços do Windows (System32) com o mesmo
+programa não geram alerta (D20): o Windows Update faz isso sozinho com o BITS.

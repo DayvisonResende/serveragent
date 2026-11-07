@@ -149,6 +149,24 @@ usuário vê e rejeita. As respostas aparecem no dashboard como texto puro, com 
 lista das ferramentas consultadas (PRD 14.9) — e um aviso quando a resposta não
 consultou dado nenhum.
 
+## D19 — Início de conversa fixo e aquecimento da IA
+
+No i3, ler as instruções e as ferramentas (~900 tokens) custa mais que escrever a
+resposta. O Ollama reaproveita a leitura de um início de conversa idêntico, então
+nada que muda (data/hora) fica nas instruções: a hora vai junto da pergunta. Ao
+abrir a página Assistente, `POST /ai/warmup` carrega o modelo e faz essa leitura
+enquanto o usuário digita; uma pergunta feita durante o aquecimento espera por ele
+em vez de receber 429.
+
+## D20 — Vigia ignora o vaivém automático ↔ manual de serviços do Windows
+
+O Windows Update alterna o início do BITS entre automático e manual quase todo dia,
+o que gerava um aviso a cada troca. Não geram alerta só as trocas entre
+automático e manual de um serviço cujo programa é o mesmo e fica em
+System32/SysWOW64. Ativar um serviço desativado, trocar o programa ou qualquer
+mudança em outro serviço continua gerando alerta; a linha de base é atualizada
+de qualquer forma.
+
 ## Decisões futuras já identificadas
 
 - **Fase 4 — Aprovações:** vincular cada aprovação a um hash de

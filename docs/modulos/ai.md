@@ -43,12 +43,13 @@ Nome de ferramenta desconhecido ou argumento inválido volta ao modelo como
 
 | Rota | Uso |
 |---|---|
-| `GET /api/v1/ai/status[?refresh=true]` | disponível?, mensagem, modelo, ocupado |
+| `GET /api/v1/ai/status[?refresh=true]` | disponível?, mensagem, modelo, ocupado, preparando |
+| `POST /api/v1/ai/warmup` | carrega o modelo e lê as instruções (chamado ao abrir a página; D19) |
 | `POST /api/v1/chat` `{message, conversation_id?}` | 200 resposta · 429 outra pergunta em andamento · 503 IA indisponível |
 | `GET /api/v1/chat/history?conversation_id=` | mensagens da conversa (com ferramentas usadas e tempo) |
 
 ## Verificação
 
 `verificar.bat`, etapa 9 (`sentinel selfcheck --ai`): Ollama e modelo presentes,
-uma pergunta real ("quantos servidores…") pelo mesmo caminho do dashboard,
+o aquecimento, uma pergunta real ("quantos servidores…") pelo mesmo caminho do dashboard,
 confirmação de que a IA consultou uma ferramenta e a memória ocupada pelo modelo.

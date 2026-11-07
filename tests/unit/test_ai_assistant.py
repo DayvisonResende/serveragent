@@ -168,7 +168,8 @@ def test_history_is_limited_to_recent_messages(tmp_path):
         return client.seen[-1]["messages"]
 
     messages = run(tmp_path, script, scenario, settings=AISettings(history_messages=2))
-    assert [m["content"] for m in messages[1:]] == ["p3", "r3", "p4"]
+    assert [m["content"] for m in messages[1:3]] == ["p3", "r3"]
+    assert messages[3]["content"].startswith("p4\n\n(agora: ")  # a hora vai na pergunta, não nas instruções
 
 
 def test_untrusted_process_names_are_marked(tmp_path):
@@ -210,3 +211,30 @@ def test_ai_action_request_only_creates_pending_approval(tmp_path):
     assert "Nada foi executado" in out["observacao"] and executed == []
     assert len(pending) == 1 and pending[0]["requested_by"] == "ia:assistente" and pending[0]["target_id"] == 7
     assert "não encontrado" in missing["erro"] and missing["servidores_cadastrados"] == ["MossBlade Server"]
+
+
+def test_conversation_start_is_identical_between_questions(tmp_path):
+    """O Ollama só reaproveita a leitura das instruções se o início for idêntico."""
+    async def scenario(assistant, client, toolbox, db):
+        await assistant.ask("c1", "a")
+        await assistant.ask("c2", "b")
+        return client.seen
+
+    seen = run(tmp_path, [reply("1"), reply("2")], scenario)
+    assert seen[0]["messages"][0] == seen[1]["messages"][0] and "agora" not in seen[0]["messages"][0]["content"]
+    assert seen[0]["tools"] == seen[1]["tools"]
+
+
+def test_warm_up_reads_prompt_once_and_question_waits_for_it(tmp_path):
+    async def scenario(assistant, client, toolbox, db):
+        warm = asyncio.create_task(assistant.warm_up())
+        await asyncio.sleep(0.05)
+        assert assistant.warming and not assistant.busy
+        answer = await assistant.ask("c1", "pergunta durante o aquecimento")  # espera, sem 429
+        again = await assistant.warm_up()  # já preparado: não repete
+        return await warm, answer, again, client.seen
+
+    warm, answer, again, seen = run(tmp_path, [reply(""), reply("pronto")], scenario, delay=0.2)
+    assert warm["aquecido"] is True and answer["answer"] == "pronto" and again["aquecido"] is False
+    assert len(seen) == 2 and seen[0]["messages"][0] == seen[1]["messages"][0]
+    assert seen[0]["tools"] == seen[1]["tools"]  # mesmas ferramentas: mesmo início de conversa

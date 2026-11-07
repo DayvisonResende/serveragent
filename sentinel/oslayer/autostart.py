@@ -70,6 +70,27 @@ def assess(entry: AutostartEntry) -> list[str]:
     return reasons
 
 
+
+_SERVICE_VALUE = re.compile(r"^(?P<path>.*) \[início: (?P<start>[\w-]+)\]$", re.DOTALL)
+_WINDOWS_BINARY = re.compile(r"^\"?[a-z]:\\windows\\(system32|syswow64)\\", re.IGNORECASE)
+_ROUTINE_START_TYPES = {"automatic", "manual"}
+
+
+def is_routine_change(location: str, old_value: str, new_value: str) -> bool:
+    """Mudança que o próprio Windows faz sozinho e não merece alerta.
+
+    Caso real (BITS): o Windows Update alterna o início do serviço entre
+    automático e manual quase todo dia. Só vale quando o programa do serviço é o
+    mesmo e fica em System32/SysWOW64; ativar um serviço desativado ("disabled")
+    ou trocar o programa continua gerando alerta.
+    """
+    if location != "Serviço":
+        return False
+    old, new = _SERVICE_VALUE.match(old_value or ""), _SERVICE_VALUE.match(new_value or "")
+    if not old or not new or old["path"] != new["path"] or not _WINDOWS_BINARY.match(new["path"].strip()):
+        return False
+    return {old["start"], new["start"]} <= _ROUTINE_START_TYPES
+
 def source_of(location: str) -> str:
     """Fonte (para linha de base e falhas) a partir do local do item."""
     if location.startswith("HK"):
