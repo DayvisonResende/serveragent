@@ -13,6 +13,7 @@
       6. API, segurança, login, tempo real e gravação de métricas (sentinel selfcheck)
       7. Servidores: cadastro, início, queda, incidente, reinício e independência do Sentinel
       8. Consumo de memória e CPU do processo real do agente (após 60 s de aquecimento)
+      9. IA local: Ollama, modelo e uma pergunta real ao assistente (por último: usa muita CPU)
     O relatório é salvo em logs\verificacao-AAAAMMDD-HHMMSS.txt e aberto no Bloco de Notas.
     A verificação de reinício do computador continua manual.
 #>
@@ -269,6 +270,12 @@ try {
         Add-Result "CPU em repouso" ($cpuPct -le 3) ("{0:N2}% (meta: até 3%)" -f $cpuPct)
         Add-Checks (& $Py -m sentinel selfcheck --json --costs 2>$null | Out-String) "Custo das tarefas"
     }
+    Write-Report ""
+
+    # 9. IA local --------------------------------------------------------------
+    Write-Report "== 9. IA local (uma pergunta real; pode levar 1 a 3 minutos) =="
+    Write-Report "  Perguntando ao assistente: quantos servidores existem e em que estado..."
+    Add-Checks (& $Py -m sentinel selfcheck --json --ai 2>$null | Out-String) "Autoteste da IA"
     Write-Report ""
 } finally {
     Pop-Location

@@ -238,3 +238,53 @@ def test_file_browser_lists_only_folders_and_wanted_files(api, tmp_path):
     assert api.client.get("/api/v1/files/browse", params={"path": str(tmp_path / "nada")}).status_code == 404
     content = api.client.get("/api/v1/files/browse", params={"path": str(tmp_path)}).text
     assert "#!/bin/sh" not in content  # nunca devolve conteúdo de arquivos
+
+
+class FakeAI:
+    """Módulo de IA mínimo para as rotas: o assistente real com um Ollama roteirizado."""
+
+    def __init__(self, db, script):
+        from sentinel.agent.config import AISettings
+        from sentinel.modules.ai.assistant import Assistant
+        from sentinel.modules.ai.tools import ToolBox
+        from tests.unit.test_ai_assistant import ScriptedOllama
+
+        self.assistant = Assistant(ScriptedOllama(script), ToolBox(MetricsStore(5), db, None, None, lambda: []), db, AISettings())
+        self.refreshed = 0
+
+    def snapshot(self):
+        return {"available": True, "message": "pronta", "model": "m", "ollama_version": "0.1", "busy": False}
+
+    async def refresh_status(self):
+        self.refreshed += 1
+        return self.snapshot()
+
+
+def test_chat_routes_require_session_and_validate(api):
+    from tests.unit.test_ai_assistant import reply
+
+    assert api.client.post("/api/v1/chat", json={"message": "oi"}, headers=ORIGIN).status_code == 401
+    api.login()
+    assert api.client.post("/api/v1/chat", json={"message": "oi"}, headers=ORIGIN).status_code == 503  # sem módulo
+    object.__setattr__(api.deps, "ai", FakeAI(api.db, [reply("Olá! Tudo bem por aqui.")]))  # ApiDeps é imutável
+    bad = api.client.post("/api/v1/chat", json={"message": "oi", "conversation_id": "../x"}, headers=ORIGIN)
+    assert bad.status_code == 422
+    assert api.client.post("/api/v1/chat", json={"message": "oi"}, headers={"origin": "http://evil.example"}).status_code == 403
+    r = api.client.post("/api/v1/chat", json={"message": "oi"}, headers=ORIGIN)
+    assert r.status_code == 200 and r.json()["answer"] == "Olá! Tudo bem por aqui."
+    conv = r.json()["conversation_id"]
+    history = api.client.get(f"/api/v1/chat/history?conversation_id={conv}").json()
+    assert [m["role"] for m in history["messages"]] == ["user", "assistant"]
+    assert api.client.get("/api/v1/ai/status").json()["available"] is True
+
+
+def test_chat_reports_unavailable_model(api):
+    from sentinel.modules.ai.ollama import OllamaUnavailable
+
+    def down(messages):
+        raise OllamaUnavailable("conexão recusada")
+
+    api.login()
+    object.__setattr__(api.deps, "ai", FakeAI(api.db, [down]))  # ApiDeps é imutável
+    r = api.client.post("/api/v1/chat", json={"message": "oi"}, headers=ORIGIN)
+    assert r.status_code == 503 and api.deps.ai.refreshed == 1

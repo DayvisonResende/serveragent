@@ -77,7 +77,9 @@ security:                           # aprovações e vigilância (PRD 11)
 
 ai:                                 # IA local via Ollama (PRD 9)
   ollama_url: http://127.0.0.1:11434   # somente neste computador
-  model: null                       # definido após o teste de viabilidade (testar-ia.bat)
+  model: hf.co/LiquidAI/LFM3-1.7B-GGUF:Q4_K_M   # escolhido pelo testar-ia.bat (4/4 ferramentas, 12 tokens/s)
+  history_messages: 6               # mensagens anteriores enviadas ao modelo (contexto curto = mais rápido)
+  max_tool_rounds: 3                # consultas encadeadas por pergunta
   keep_alive_minutes: 5             # descarrega o modelo da memória após inatividade
   timeout_seconds: 180
 

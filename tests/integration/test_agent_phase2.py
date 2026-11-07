@@ -66,7 +66,7 @@ def test_full_agent_collects_serves_and_persists(settings):
 
     report, (health, unauthenticated) = asyncio.run(run_briefly(agent, 1.5, probe))
     assert report["agent"]["state"] == "running", report["modules"]
-    assert {m["name"]: m["status"] for m in report["modules"]} == {"monitor": "running", "servers": "running", "security": "running", "notifications": "running", "api": "running"}
+    assert {m["name"]: m["status"] for m in report["modules"]} == {"monitor": "running", "servers": "running", "security": "running", "notifications": "running", "ai": "running", "api": "running"}
     assert health == (200, {"status": "ok"})
     assert unauthenticated[0] == 401
     # a janela parcial é gravada no encerramento: o último minuto não se perde

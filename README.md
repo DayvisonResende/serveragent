@@ -3,11 +3,13 @@
 Agente local de administração, monitoramento e manutenção de servidores Windows.
 Especificação completa em [PRD.md](PRD.md).
 
-**Estado atual:** Fase 4 — Segurança. Monitoramento (Fase 2), servidores (Fase 3)
-e agora aprovações: o Sentinel só **propõe** ações (ex.: reiniciar um servidor que
-caiu) e espera a sua decisão; tudo passa por um executor restrito e fica auditado.
-Também vigia a inicialização automática do Windows e avisa quando algo muda.
-Ainda não há IA (Fase 5).
+**Estado atual:** Fase 5 — IA local. Monitoramento (Fase 2), servidores (Fase 3),
+aprovações e auditoria (Fase 4) e agora um **assistente** no dashboard: você pergunta
+em português ("algum servidor está com problema?") e a IA local (Ollama, modelo
+LFM3-1.7B) consulta os dados reais do Sentinel antes de responder. A IA não executa
+nada: pedidos para iniciar, parar ou reiniciar servidores viram itens em
+**Aprovações**. O monitoramento não depende da IA: com o Ollama desligado, só o
+assistente fica indisponível.
 
 ## Requisitos
 
@@ -40,7 +42,7 @@ Atalhos de dois cliques na raiz do projeto:
 | `instalar.bat` / `desinstalar.bat` | instala/atualiza ou remove a tarefa agendada |
 | `ligar.bat` | liga o Sentinel agora (pela tarefa agendada) |
 | `iniciar-com-windows.bat` | faz o Sentinel subir com o Windows, sem logon (pede a senha da conta) |
-| `testar-ia.bat` | teste de viabilidade da IA local (Ollama): velocidade, memória e uso de ferramentas de cada modelo |
+| `testar-ia.bat` | baixa o modelo e mede a IA local (Ollama): velocidade, memória e uso de ferramentas |
 | `investigar-processo.bat` | relatório **somente leitura** sobre um executável suspeito (assinatura, hash, origem, inicialização automática) |
 
 ## Uso
@@ -53,6 +55,8 @@ python -m sentinel check-config   # valida e mostra a configuração efetiva
 python -m sentinel dashboard      # abre o dashboard em http://127.0.0.1:8765 com login de uso único
 python -m sentinel stop           # pede ao agente que encerre de forma limpa
 python -m sentinel selfcheck      # testa API, segurança, tempo real e gravação de métricas
+python -m sentinel selfcheck --ai # uma pergunta real ao assistente (Ollama precisa estar ligado)
+python -m sentinel ai-bench       # velocidade e precisão do modelo de IA nesta máquina
 python -m sentinel server list    # servidores cadastrados e seus estados
 python -m sentinel server restart <nome>   # também: start, stop
 ```

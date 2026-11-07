@@ -8,6 +8,7 @@ import { h, card, meter, setMeter, severityBadge } from "./ui.js";
 import { serversPage, serverFormPage, serverDetailPage, statePill, summarize } from "./servers.js";
 import { settingsPage } from "./settings.js";
 import { approvalsPage, securityPage, actionsTable, auditTable } from "./security.js";
+import { assistantPage, aiPill } from "./assistant.js";
 
 const view = document.getElementById("view");
 const banner = document.getElementById("banner");
@@ -321,7 +322,7 @@ function renderAgent(box, s) {
       h("dt", { text: "Versão" }), h("dd", { text: a.version }),
       h("dt", { text: "Última coleta" }), h("dd", { text: s.current ? fmt.ago(s.current.age_seconds) : "nenhuma ainda" }),
       h("dt", { text: "Modo de recursos" }), h("dd", { text: `${level} (fator ${s.resources.load_factor}x)` }),
-      h("dt", { text: "IA local" }), h("dd", {}, h("span", { class: "pill pill-muted", text: "Indisponível" }), " ", h("span", { class: "muted", text: s.ai.message })),
+      h("dt", { text: "IA local" }), h("dd", {}, aiPill(s.ai), " ", h("span", { class: "muted", text: s.ai.message }), " ", h("a", { href: "#/assistente", class: "small", text: "Abrir assistente" })),
       h("dt", { text: "Tarefas com falha" }), h("dd", { text: a.failing_jobs.length ? a.failing_jobs.join(", ") : "nenhuma" })),
     h("h3", { class: "section-gap", text: "Módulos" }),
     modules);
@@ -499,6 +500,7 @@ const routes = {
   "/configuracoes": () => settingsPage(view),
   "/aprovacoes": () => approvalsPage(view),
   "/seguranca": () => securityPage(view),
+  "/assistente": () => assistantPage(view),
 };
 
 // Rotas com parâmetro: #/servidores/novo?pid=N, #/servidores/ID, #/servidores/ID/editar

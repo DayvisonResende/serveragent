@@ -22,6 +22,7 @@ from sentinel.database.database import Database
 from sentinel.modules.monitor.store import MetricsStore
 
 if TYPE_CHECKING:
+    from sentinel.modules.ai.module import AIModule
     from sentinel.modules.notifications.manager import NotificationsModule
     from sentinel.modules.security.module import SecurityModule
     from sentinel.modules.servers.manager import ServersModule
@@ -42,6 +43,7 @@ class ApiDeps:
     servers: ServersModule | None = None
     notifications: NotificationsModule | None = None
     security: SecurityModule | None = None
+    ai: AIModule | None = None
 
 
 def get_deps(request: Request) -> ApiDeps:
@@ -55,7 +57,7 @@ async def require_session(request: Request) -> None:
 
 
 def create_app(deps: ApiDeps, dashboard_dir: Path = DASHBOARD_DIR) -> FastAPI:
-    from sentinel.api.routes import auth, events, files, security, servers, settings, system
+    from sentinel.api.routes import ai, auth, events, files, security, servers, settings, system
 
     app = FastAPI(
         title="Sentinel",
@@ -79,6 +81,7 @@ def create_app(deps: ApiDeps, dashboard_dir: Path = DASHBOARD_DIR) -> FastAPI:
     app.include_router(files.router, dependencies=protected)
     app.include_router(settings.router, dependencies=protected)
     app.include_router(security.router, dependencies=protected)
+    app.include_router(ai.router, dependencies=protected)
     app.include_router(events.ws_router)  # autenticação feita no handshake
 
     app.mount("/", StaticFiles(directory=dashboard_dir, html=True), name="dashboard")

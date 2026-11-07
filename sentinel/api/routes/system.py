@@ -17,11 +17,7 @@ from sentinel.modules.monitor.store import epoch_iso
 router = APIRouter(prefix="/api/v1/system")
 
 RANGES: dict[str, int] = {"15m": 900, "1h": 3600, "6h": 6 * 3600, "24h": 86_400, "7d": 7 * 86_400, "30d": 30 * 86_400}
-AI_STATUS = {
-    "available": False,
-    "status": "not_configured",
-    "message": "Integração com IA local prevista para a Fase 5.",
-}
+AI_STATUS = {"available": False, "message": "módulo de IA desativado"}
 
 
 def _age(epoch: float | None) -> float | None:
@@ -76,7 +72,7 @@ async def status(request: Request) -> dict[str, Any]:
             "collected_at": epoch_iso(store.processes_at) if store.processes_at else None,
         },
         "alerts": deps.alerts(),
-        "ai": AI_STATUS,
+        "ai": deps.ai.snapshot() if deps.ai is not None else AI_STATUS,
     }
 
 

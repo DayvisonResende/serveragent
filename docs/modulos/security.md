@@ -16,7 +16,7 @@
 |---|---|---|
 | Usuário (dashboard/CLI, com confirmação) | o próprio pedido | botão "Reiniciar" |
 | Política autorizada pelo usuário | `politica-autorizada` | reinício automático ligado no cadastro |
-| Sentinel (e a IA, na Fase 5) | **pendente até o usuário decidir** | servidor caiu sem política → "Reiniciar X?" |
+| Sentinel e a IA (`ia:assistente`) | **pendente até o usuário decidir** | servidor caiu sem política → "Reiniciar X?" |
 | Qualquer um, operação nível 3 | pendente + digitar o nome do alvo | (nenhuma operação nível 3 ainda) |
 
 ## Garantias (PRD 23.3)

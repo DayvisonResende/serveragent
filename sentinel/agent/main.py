@@ -70,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     check_parser.add_argument("--json", action="store_true", help="saída em JSON (ASCII), para scripts")
     check_parser.add_argument("--servers", choices=["prepare", "finish"], help="autoteste de servidores (usado pelo verificar.bat)")
     check_parser.add_argument("--costs", action="store_true", help="apenas o custo médio das tarefas do agente")
+    check_parser.add_argument("--ai", action="store_true", help="autoteste da IA local: uma pergunta real ao assistente")
     bench = commands.add_parser("ai-bench", help="teste de viabilidade da IA local (Ollama) neste computador")
     bench.add_argument("--pull", action="store_true", help="baixar os modelos candidatos que faltarem (~4 GB)")
     bench.add_argument("--model", action="append", help="testar apenas este modelo do Ollama (pode repetir)")
@@ -89,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "status":
             return cmd_status(settings, as_json=args.json)
         if args.command == "selfcheck":
-            return cmd_selfcheck(settings, as_json=args.json, servers=args.servers, costs=args.costs)
+            return cmd_selfcheck(settings, as_json=args.json, servers=args.servers, costs=args.costs, ai=args.ai)
         if args.command == "ai-bench":
             return cmd_ai_bench(settings, args.pull, args.model)
         if args.command == "server":
@@ -149,6 +150,7 @@ def build_agent(settings: Settings) -> Agent:
     """Raiz de composição: cria o agente e conecta os módulos."""
     from sentinel.api.server import ApiModule
     from sentinel.modules.monitor import MetricsStore, MonitorModule
+    from sentinel.modules.ai.module import AIModule
     from sentinel.modules.notifications.manager import NotificationsModule
     from sentinel.modules.security.module import SecurityModule
     from sentinel.modules.servers.manager import ServersModule
@@ -159,11 +161,11 @@ def build_agent(settings: Settings) -> Agent:
     servers = ServersModule(store)
     notifications = NotificationsModule()
     security = SecurityModule(servers)
-    agent = Agent(settings, modules=[monitor, servers, security, notifications])
+    alerts = lambda: monitor.alerts.active() if monitor.alerts else []  # noqa: E731
+    ai = AIModule(store, servers, security, alerts)
+    agent = Agent(settings, modules=[monitor, servers, security, notifications, ai])
     if settings.api.enabled:
-        agent.registry.register(
-            ApiModule(store, agent.health_report, lambda: monitor.alerts.active() if monitor.alerts else [], servers, notifications, security)
-        )
+        agent.registry.register(ApiModule(store, agent.health_report, alerts, servers, notifications, security, ai))
     return agent
 
 
@@ -186,11 +188,18 @@ async def _run_agent(settings: Settings) -> None:
         listener.stop()
 
 
-def cmd_selfcheck(settings: Settings, as_json: bool = False, servers: str | None = None, costs: bool = False) -> int:
+def cmd_selfcheck(settings: Settings, as_json: bool = False, servers: str | None = None, costs: bool = False, ai: bool = False) -> int:
     from sentinel.agent.selfcheck import Check, run_selfcheck
     from sentinel.agent.selfcheck import as_json as checks_json
 
-    if servers:
+    if ai:
+        from sentinel.agent import ai_selftest
+
+        try:
+            checks = ai_selftest.run(settings)
+        except Exception as exc:  # o relatório precisa mostrar a falha, não um traceback
+            checks = [Check("Autoteste da IA", False, f"{type(exc).__name__}: {exc}")]
+    elif servers:
         from sentinel.agent import server_selftest
 
         try:

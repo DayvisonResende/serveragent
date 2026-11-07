@@ -215,6 +215,22 @@ dialog.picker::backdrop { background: rgba(0, 0, 0, 0.6); }
 .picker-icon { color: var(--text-muted); text-align: center; }
 .picker-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ---------- assistente ---------- */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.chat { list-style: none; margin: 12px 0; padding: 0; display: flex; flex-direction: column; gap: 10px; max-height: 60vh; overflow-y: auto; }
+.msg { max-width: min(760px, 92%); padding: 10px 14px; border-radius: var(--radius); border: 1px solid var(--border); display: grid; gap: 6px; }
+.msg-user { align-self: flex-end; background: var(--surface-2); }
+.msg-ai { align-self: flex-start; background: var(--page); }
+.msg-who { font-size: 12px; color: var(--text-muted); }
+.msg-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg-meta { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.chip { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-secondary); }
+.chip-error { border-color: var(--status-critical); }
+.chat-empty { align-self: center; padding: 20px 0; }
+.chat-form { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
+.chat-form textarea { flex: 1; min-width: 0; resize: vertical; background: var(--surface-2); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: inherit; }
+
 @media (max-width: 640px) {
   .topbar { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
   .nav { order: 3; flex-basis: 100%; }

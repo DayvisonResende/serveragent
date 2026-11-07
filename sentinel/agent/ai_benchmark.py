@@ -16,6 +16,7 @@ from typing import Any, Callable
 
 import psutil
 
+from sentinel.modules.ai.model_profile import options_for, strip_thinking, think_flag
 from sentinel.modules.ai.ollama import ChatResult, OllamaClient, OllamaError
 
 # LFM3-1.7B é o modelo previsto no PRD (docs.liquid.ai/lfm/models/lfm3-1.7b); os demais servem de comparação.
@@ -24,11 +25,6 @@ CANDIDATES: list[tuple[str, str]] = [
     ("Qwen3 1.7B", "qwen3:1.7b"),
     ("Llama 3.2 3B", "llama3.2:3b"),
 ]
-
-# Parâmetros de geração recomendados pelo fabricante, quando diferem do padrão.
-MODEL_OPTIONS = {
-    "lfm3": {"temperature": 0.1, "top_k": 50, "repeat_penalty": 1.1},
-}
 
 SYSTEM = (
     "Você é o Sentinel, assistente que administra este computador e seus servidores. "
@@ -88,16 +84,8 @@ class ModelReport:
         return sum(ok for _, ok, _ in self.tool_results)
 
 
-def _think_flag(model: str) -> bool | None:
-    # Qwen3 e LFM3 "pensam" por padrão (lento em CPU); desligar dá respostas diretas.
-    low = model.lower()
-    return False if ("qwen3" in low or "lfm3" in low) else None
-
-
-def _options(model: str, extra: dict[str, Any]) -> dict[str, Any]:
-    low = model.lower()
-    base = next((opts for key, opts in MODEL_OPTIONS.items() if key in low), {})
-    return {**base, **extra}
+_think_flag = think_flag
+_options = options_for
 
 
 class _Chat:
@@ -190,14 +178,7 @@ def _measure(client: OllamaClient, report: ModelReport, log: Callable[[str], Non
     log(f"  Resposta ({report.answer_seconds}s): {report.answer_sample}")
 
 
-def _strip_thinking(text: str) -> str:
-    """Remove blocos <think>…</think> que alguns modelos deixam no texto."""
-    import re
-
-    cleaned = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL)
-    if "</think>" in cleaned:  # tag de fechamento solta (relatada com o GGUF do LFM3)
-        cleaned = cleaned.split("</think>")[-1]
-    return cleaned.strip()
+_strip_thinking = strip_thinking
 
 
 def _grade(case: ToolCase, result: ChatResult) -> tuple[bool, str]:
