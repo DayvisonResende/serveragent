@@ -3,11 +3,11 @@
 Agente local de administração, monitoramento e manutenção de servidores Windows.
 Especificação completa em [PRD.md](PRD.md).
 
-**Estado atual:** Fase 3 — Servidores. Além do monitoramento do computador
-(Fase 2), o Sentinel cadastra servidores, verifica a saúde deles, registra
-incidentes, mostra logs e inicia/para/reinicia servidores gerenciados — sempre a
-pedido do usuário. Servidores continuam rodando se o Sentinel for encerrado.
-Ainda não há aprovações nem IA (Fases 4–5).
+**Estado atual:** Fase 4 — Segurança. Monitoramento (Fase 2), servidores (Fase 3)
+e agora aprovações: o Sentinel só **propõe** ações (ex.: reiniciar um servidor que
+caiu) e espera a sua decisão; tudo passa por um executor restrito e fica auditado.
+Também vigia a inicialização automática do Windows e avisa quando algo muda.
+Ainda não há IA (Fase 5).
 
 ## Requisitos
 

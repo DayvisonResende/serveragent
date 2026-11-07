@@ -189,6 +189,13 @@ details.data-table summary { cursor: pointer; color: var(--text-muted); }
 .log-view { background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 10px; max-height: 420px; overflow: auto; font: 12px/1.45 ui-monospace, Consolas, monospace; color: var(--text-secondary); white-space: pre-wrap; word-break: break-all; }
 
 .input-row { display: flex; gap: 8px; }
+.badge { display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 4px; border-radius: 999px; background: var(--status-warning); color: #0b0b0b; font-size: 11px; font-weight: 700; text-align: center; }
+.approval h2 { font-size: 16px; }
+.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all; }
+td.wrap { white-space: normal; min-width: 220px; }
+tr.row-alert td { background: rgba(208, 59, 59, 0.12); }
+.snapshot { margin-top: 8px; }
+.events li .btn-small { margin-top: 6px; }
 fieldset.policy { border: 1px solid var(--grid); border-radius: 8px; padding: 12px 14px; display: grid; gap: 10px; }
 fieldset.policy legend { color: var(--text-secondary); padding: 0 6px; }
 .steps { color: var(--text-secondary); padding-left: 20px; line-height: 1.7; }

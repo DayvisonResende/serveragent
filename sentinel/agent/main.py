@@ -145,6 +145,7 @@ def build_agent(settings: Settings) -> Agent:
     from sentinel.api.server import ApiModule
     from sentinel.modules.monitor import MetricsStore, MonitorModule
     from sentinel.modules.notifications.manager import NotificationsModule
+    from sentinel.modules.security.module import SecurityModule
     from sentinel.modules.servers.manager import ServersModule
 
     m = settings.monitoring
@@ -152,10 +153,11 @@ def build_agent(settings: Settings) -> Agent:
     monitor = MonitorModule(store)
     servers = ServersModule(store)
     notifications = NotificationsModule()
-    agent = Agent(settings, modules=[monitor, servers, notifications])
+    security = SecurityModule(servers)
+    agent = Agent(settings, modules=[monitor, servers, security, notifications])
     if settings.api.enabled:
         agent.registry.register(
-            ApiModule(store, agent.health_report, lambda: monitor.alerts.active() if monitor.alerts else [], servers, notifications)
+            ApiModule(store, agent.health_report, lambda: monitor.alerts.active() if monitor.alerts else [], servers, notifications, security)
         )
     return agent
 

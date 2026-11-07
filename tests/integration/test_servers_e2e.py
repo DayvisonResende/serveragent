@@ -253,3 +253,25 @@ def test_restart_policy_requires_managed_server(fast_settings):
         assert exc.value.status == 422
     finally:
         agent.stop()
+
+
+def test_crash_creates_approval_and_deleting_server_cancels_it(fast_settings):
+    import sys
+
+    agent = RunningAgent(fast_settings)
+    try:
+        client = LocalClient(fast_settings)
+        port = free_port()
+        sid = client.request("POST", "/api/v1/servers", {
+            "name": "proposta", "management": "managed", "executable": sys.executable,
+            "arguments": ["-m", "http.server", str(port), "--bind", "127.0.0.1"], "port": port, "health_check": {"type": "tcp"},
+        })["server"]["id"]
+        started = client.request("POST", f"/api/v1/servers/{sid}/actions/start")
+        psutil.Process(started["pid"]).kill()
+        pending = _wait_for(lambda: client.request("GET", "/api/v1/approvals")["approvals"], 30)
+        assert pending and pending[0]["target_id"] == sid and pending[0]["requested_by"] == "sentinel:servidores"
+        client.request("DELETE", f"/api/v1/servers/{sid}")
+        assert client.request("GET", "/api/v1/approvals")["pending"] == 0
+        assert client.request("GET", f"/api/v1/actions/{pending[0]['id']}")["status"] == "cancelled"
+    finally:
+        agent.stop()

@@ -11,7 +11,9 @@ from pydantic import BaseModel, Field
 from sentinel.api.app import get_deps
 from sentinel.database.repositories import AuditRepository
 from sentinel.database.repositories.servers import DuplicateServerError, ServerRepository
-from sentinel.modules.servers.manager import OperationError, ServerNotFound, ServersModule
+from sentinel.modules.security.actions import ActionNotFound
+from sentinel.modules.security.operations import ActionError
+from sentinel.modules.servers.manager import ServerNotFound, ServersModule
 from sentinel.modules.servers.models import ServerSpec
 from sentinel.oslayer.process_control import listening_ports
 
@@ -96,6 +98,9 @@ async def delete_server(request: Request, server_id: int) -> Response:
     if record is None:
         raise HTTPException(404, f"Servidor {server_id} não encontrado")
     await repo.delete(server_id)
+    if deps.security is not None and deps.security.actions is not None:
+        for operation in deps.security.actions.catalog:
+            await deps.security.actions.cancel_pending(operation, server_id, "o cadastro do servidor foi excluído")
     await module.reload()
     await AuditRepository(deps.database).record(
         actor=_actor(request), operation="server.delete", target=record.name, result="success", details=record.summary()
@@ -135,15 +140,23 @@ async def all_incidents(request: Request, limit: int = Query(50, ge=1, le=500)) 
 
 @router.post("/servers/{server_id}/actions/{action}")
 async def server_action(request: Request, server_id: int, action: Literal["start", "stop", "restart"], body: OperationRequest | None = None) -> dict[str, Any]:
-    """Operação pedida explicitamente pelo usuário autenticado (com confirmação no dashboard).
-    Na Fase 4 passará pelo sistema de aprovações."""
-    module = _module(request)
+    """Operação pedida explicitamente pelo usuário (com confirmação no dashboard): passa pelo
+    executor de ações, com o próprio usuário como aprovador, e fica registrada."""
+    _module(request)
+    security = get_deps(request).security
+    if security is None or security.actions is None:
+        raise HTTPException(503, "Módulo de segurança indisponível")
     try:
-        return await module.execute(OPERATIONS[action], server_id, _actor(request), body.reason if body else None)
-    except ServerNotFound as exc:
+        record = await security.actions.request(OPERATIONS[action], server_id, {}, _actor(request),
+                                                (body.reason if body else None) or "pedido do usuário", approval="user")
+    except ActionNotFound as exc:
         raise HTTPException(404, str(exc)) from exc
-    except OperationError as exc:
-        raise HTTPException(409, str(exc)) from exc
+    except ActionError as exc:
+        status = 404 if "não encontrado" in str(exc) else 409
+        raise HTTPException(status, str(exc)) from exc
+    result = record.get("result") or {}
+    return {**result, "ok": record["status"] == "completed", "action_id": record["id"], "action_status": record["status"],
+            "message": result.get("message") or record.get("error_message") or record["status"]}
 
 
 @router.get("/system/processes/{pid}/candidate")

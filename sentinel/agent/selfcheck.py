@@ -101,6 +101,22 @@ def run_selfcheck(settings: Settings) -> list[Check]:
     elif res:
         checks.append(Check("Status com dados reais", False, f"-> {res[0]}"))
 
+    # 4b. segurança: vigia da inicialização automática e aprovações
+    res = attempt("Vigia da inicialização automática", lambda: http.raw("GET", "/api/v1/security/autostart", auth))
+    if res and res[0] == 200:
+        data = json.loads(res[2])
+        st = data["status"]
+        ok = st.get("last_scan") is not None and st.get("entries", 0) > 0
+        detail = f"{st.get('entries', 0)} itens vigiados" + (f"; fontes com erro: {'; '.join(st['errors'])}" if st.get("errors") else "")
+        checks.append(Check("Vigia da inicialização automática", ok, detail if ok else f"ainda sem varredura completa ({detail})"))
+        suspicious = [e for e in data.get("entries", []) if e.get("suspicious")]
+        checks.append(Check("Itens suspeitos na inicialização (informativo)", True,
+                            "nenhum" if not suspicious else " | ".join(f"{e['location']} → {e['name']}: {'; '.join(e['reasons'])}" for e in suspicious[:3])))
+    res = attempt("Aprovações", lambda: http.raw("GET", "/api/v1/approvals?status=pending", auth))
+    if res and res[0] == 200:
+        pending = json.loads(res[2])["pending"]
+        checks.append(Check("Aprovações pendentes (informativo)", True, f"{pending} aguardando decisão"))
+
     # 5. tempo real
     attempt("WebSocket em tempo real", lambda: checks.append(_check_websocket(http, auth["Cookie"], origin, settings)))
 

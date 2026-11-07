@@ -123,3 +123,12 @@ def test_smoothing_ignores_single_spike():
     for _ in range(5):
         rm.update(10, 40)
     assert rm.update(100, 40) is PressureLevel.NORMAL
+
+
+def test_restored_disk_alert_is_not_repeated():
+    ev, events, _ = make_evaluator()
+    ev.restore_disk_alert("C:\\", "warning", 1_700_000_000.0)
+    ev.check_disks([disk(8)])  # continua baixo: nenhum aviso novo após reiniciar o agente
+    assert events == [] and ev.active()[0]["key"] == "disk:C:\\"
+    ev.check_disks([disk(30)])
+    assert events[-1].event_type == A.EVENT_DISK_RECOVERED

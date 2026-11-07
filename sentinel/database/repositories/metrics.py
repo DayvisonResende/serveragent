@@ -150,6 +150,28 @@ class MetricsRepository:
             }
         return result
 
+    async def processes_near(self, ts_epoch: float, window: float = 600) -> dict[str, Any]:
+        """Instantâneo dos processos mais pesados mais próximo de ``ts_epoch`` (até ``window`` s de distância)."""
+        row = await self._db.fetch_one(
+            "SELECT ts_epoch FROM process_snapshots WHERE ts_epoch BETWEEN ? AND ?"
+            " ORDER BY ABS(ts_epoch - ?) LIMIT 1",
+            (ts_epoch - window, ts_epoch + window, ts_epoch),
+        )
+        if row is None:
+            return {"snapshot_epoch": None, "processes": [], "system": None}
+        snap = row["ts_epoch"]
+        processes = await self._db.fetch_all(
+            "SELECT pid, process_name, executable_path, cpu_percent, memory_bytes FROM process_snapshots"
+            " WHERE ts_epoch = ? ORDER BY COALESCE(cpu_percent, 0) DESC, memory_bytes DESC",
+            (snap,),
+        )
+        system = await self._db.fetch_one(
+            "SELECT ts_epoch, cpu_percent, cpu_percent_max, ram_percent FROM system_metrics"
+            " WHERE ts_epoch BETWEEN ? AND ? ORDER BY ABS(ts_epoch - ?) LIMIT 1",
+            (ts_epoch - 120, ts_epoch + 120, ts_epoch),
+        )
+        return {"snapshot_epoch": snap, "processes": processes, "system": system}
+
     async def purge_older_than(self, table: str, cutoff_epoch: float) -> int:
         if table not in RETENTION_TABLES:
             raise ValueError(f"Tabela sem política de retenção: {table}")

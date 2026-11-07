@@ -125,20 +125,35 @@ def prepare(settings: Settings) -> list[Check]:
     open_incident = next((i for i in incidents if i["closed_epoch"] is None), None)
     checks.append(Check("Incidente registrado", open_incident is not None, open_incident["title"] if open_incident else "nenhum incidente aberto"))
 
-    try:
-        restarted = client.request("POST", f"/api/v1/servers/{sid}/actions/restart", {"reason": "recuperação no autoteste"})
-    except ApiError as exc:
-        checks.append(Check("Reinicialização controlada", False, str(exc.detail)))
+    # MVP 7: sem reinício automático, o Sentinel pede aprovação para reiniciar.
+    pending = _wait(lambda: next((a for a in client.request("GET", "/api/v1/approvals")["approvals"]
+                                  if a["target_id"] == sid and a["action_type"] == "server_restart"), None), 20)
+    checks.append(Check("Solicitação de aprovação criada (MVP 7)", bool(pending),
+                        f"#{pending['id']}: {pending['reason'][:120]}" if pending else "nenhuma solicitação pendente"))
+    if not pending:
         return checks
-    checks.append(Check("Reinicialização controlada", restarted["ok"] and restarted["state"] == "online", restarted["message"]))
+    try:
+        approved = client.request("POST", f"/api/v1/approvals/{pending['id']}/approve", {})
+    except ApiError as exc:
+        checks.append(Check("Reinicialização aprovada e executada (MVP 8)", False, str(exc.detail)))
+        return checks
+    result = approved.get("result") or {}
+    restarted = {"ok": approved["status"] == "completed", "pid": result.get("pid"), "message": result.get("message", approved["status"])}
+    checks.append(Check("Reinicialização aprovada e executada (MVP 8)", restarted["ok"] and result.get("state") == "online", restarted["message"]))
     if not restarted["ok"] or restarted["pid"] is None:
         return checks
+    try:
+        client.request("POST", f"/api/v1/approvals/{pending['id']}/approve", {})
+        reused = True
+    except ApiError:
+        reused = False
+    checks.append(Check("Aprovação não pode ser reutilizada", not reused, "segunda aprovação recusada" if not reused else "aprovação reutilizada!"))
     incidents = client.request("GET", f"/api/v1/servers/{sid}/incidents")["incidents"]
     closed = incidents and incidents[0]["closed_epoch"] is not None
     checks.append(Check("Incidente encerrado após recuperação", bool(closed),
                         f"duração {incidents[0]['duration_seconds']}s" if closed else "incidente continua aberto"))
     audit = _audited_operations(settings)
-    checks.append(Check("Operações registradas no histórico", {"server_start", "server_restart"} <= audit,
+    checks.append(Check("Operações registradas no histórico (MVP 10)", {"server_start", "server_restart", "approval.approve"} <= audit,
                         "auditoria: " + ", ".join(sorted(audit)) if audit else "nenhum registro de auditoria"))
 
     if sys.platform == "win32":
@@ -196,7 +211,7 @@ def _audited_operations(settings: Settings) -> set[str]:
     conn = sqlite3.connect(f"file:{settings.paths.database_file}?mode=ro", uri=True)
     try:
         rows = conn.execute(
-            "SELECT operation FROM audit_logs WHERE target = ? AND result = 'success' ORDER BY id DESC LIMIT 20", (TEST_NAME,)
+            "SELECT operation FROM audit_logs WHERE target = ? AND result IN ('success', 'approved') ORDER BY id DESC LIMIT 20", (TEST_NAME,)
         ).fetchall()
     finally:
         conn.close()

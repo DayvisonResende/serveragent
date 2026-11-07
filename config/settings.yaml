@@ -70,6 +70,11 @@ servers:                            # gerenciamento de servidores (PRD 6)
   operations_per_window: 5          # no máximo 5 operações por servidor...
   operations_window_seconds: 600    # ...a cada 10 minutos (evita ciclos de reinício)
 
+security:                           # aprovações e vigilância (PRD 11)
+  approval_ttl_minutes: 30          # solicitações expiram se ninguém decidir
+  propose_server_restart: true      # servidor gerenciado caiu sem reinício automático → pede aprovação
+  autostart_scan_minutes: 10        # verificação da inicialização automática (registro, tarefas, serviços)
+
 retention:                          # dias mantidos por categoria (PRD 16.2)
   metrics_days: 30
   process_snapshots_days: 7

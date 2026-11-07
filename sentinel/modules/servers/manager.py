@@ -117,6 +117,7 @@ class ServersModule(Module):
         self._children: dict[int, Any] = {}  # PID → Popen dos servidores iniciados por nós
         self._jobs: list[str] = []
         self._recovery: dict[int, asyncio.Task[None]] = {}
+        self._restart_runner: Any = None  # definido pela composição (executor de ações)
 
     # ------------------------------------------------------------ ciclo de vida
 
@@ -366,7 +367,10 @@ class ServersModule(Module):
             if status.incident_id is not None:
                 await self._repo.append_incident(status.incident_id, {"at": to_iso(utc_now()), "state": "auto_restart", "detail": reason})
             try:
-                result = await self.execute("server_restart", server_id, AUTO_ACTOR, reason)
+                if self._restart_runner is not None:
+                    result = await self._restart_runner(server_id, AUTO_ACTOR, reason)
+                else:
+                    result = await self.execute("server_restart", server_id, AUTO_ACTOR, reason)
             except OperationError as exc:  # recusa (ex.: limite de frequência)
                 result = {"ok": False, "message": str(exc)}
             self._publish(
@@ -387,7 +391,19 @@ class ServersModule(Module):
         except Exception:
             log.exception("Falha na recuperação automática", extra={"server_id": server_id})
 
-    async def execute(self, operation: str, server_id: int, actor: str, reason: str | None = None) -> dict[str, Any]:
+    def get_record(self, server_id: int) -> ServerRecord | None:
+        return self._servers.get(server_id)
+
+    def get_status(self, server_id: int) -> ServerStatus | None:
+        return self._status.get(server_id)
+
+    def set_restart_runner(self, runner: Any) -> None:
+        """Faz o reinício automático passar pelo executor de ações (Fase 4): registro e aprovação por política."""
+        self._restart_runner = runner
+
+    async def execute(
+        self, operation: str, server_id: int, actor: str, reason: str | None = None, approval_id: int | None = None
+    ) -> dict[str, Any]:
         """Executa uma operação permitida, com validação, limite de frequência e auditoria."""
         assert self._ctx is not None and self._audit is not None
         if operation not in ALLOWED_OPERATIONS:
@@ -406,7 +422,7 @@ class ServersModule(Module):
         except OperationError as exc:
             # Recusa antes de qualquer ação: auditada, e devolvida como erro ao solicitante.
             await self._audit.record(actor=actor, operation=operation, target=record.name, reason=reason,
-                                     result="refused", details={"message": str(exc)})
+                                     approval_id=approval_id, result="refused", details={"message": str(exc)})
             raise
 
         async with lock:
@@ -428,7 +444,7 @@ class ServersModule(Module):
 
             if refused is not None:
                 await self._audit.record(actor=actor, operation=operation, target=record.name, reason=reason,
-                                         result="refused", details={"message": message})
+                                         approval_id=approval_id, result="refused", details={"message": message})
                 raise refused
 
             result = {
@@ -443,7 +459,7 @@ class ServersModule(Module):
             }
             status.last_operation = {**result, "at": to_iso(utc_now()), "actor": actor}
             await self._audit.record(
-                actor=actor, operation=operation, target=record.name, reason=reason,
+                actor=actor, operation=operation, target=record.name, reason=reason, approval_id=approval_id,
                 result="success" if ok else "failed", details={**details, "message": message},
             )
             self._publish(

@@ -108,6 +108,21 @@ conectado ou não" com gatilho na inicialização. A senha fica com o Agendador 
 Tarefas; administrador é usado só para registrar; o agente roda limitado. O
 instalador preserva esse modo nas atualizações.
 
+## D15 — O clique do usuário é a aprovação; o Sentinel e a IA só propõem
+
+Pedir para o usuário aprovar o próprio clique não acrescenta segurança. Por isso o
+pedido do usuário (com confirmação) é aprovado por ele mesmo, mas passa pelo mesmo
+executor e fica registrado. Pedidos do Sentinel — e da IA na Fase 5 — ficam
+pendentes. A aprovação é amarrada a uma impressão digital do alvo e só pode ser
+usada uma vez (UPDATE condicional atômico).
+
+## D16 — Vigia da inicialização automática
+
+Motivado pelo malware encontrado no OptiPlex (persistência no Shell do Winlogon,
+não detectada pelo antivírus). A primeira varredura já aponta itens suspeitos; as
+seguintes alertam mudanças. É detecção, não remoção: remover exigiria
+administrador e o PRD exclui o papel de antivírus.
+
 ## Decisões futuras já identificadas
 
 - **Fase 4 — Aprovações:** vincular cada aprovação a um hash de

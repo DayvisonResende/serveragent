@@ -118,6 +118,14 @@ class ServersSettings(_Section):
     operations_window_seconds: float = Field(600, ge=60, le=86_400)  # ...nesta janela
 
 
+class SecuritySettings(_Section):
+    """Aprovações (PRD 11.3)."""
+
+    approval_ttl_minutes: int = Field(30, ge=1, le=1440)  # prazo para aprovar antes de expirar
+    propose_server_restart: bool = True  # servidor gerenciado caiu sem política → pede aprovação para reiniciar
+    autostart_scan_minutes: int = Field(10, ge=1, le=1440)
+
+
 class RetentionSettings(_Section):
     """Retenção por categoria (PRD 16.2). Executada diariamente."""
 
@@ -158,6 +166,7 @@ class Settings(_Section):
     alerts: AlertSettings = AlertSettings()
     resources: ResourceSettings = ResourceSettings()
     servers: ServersSettings = ServersSettings()
+    security: SecuritySettings = SecuritySettings()
     retention: RetentionSettings = RetentionSettings()
     api: ApiSettings = ApiSettings()
 

@@ -125,6 +125,15 @@ async def processes(
     }
 
 
+@router.get("/processes/at")
+async def processes_at(request: Request, ts: float = Query(..., gt=0)) -> dict[str, Any]:
+    """O que estava rodando num momento passado (instantâneos gravados a cada 5 min)."""
+    data = await MetricsRepository(get_deps(request).database).processes_near(ts)
+    data["snapshot_at"] = epoch_iso(data["snapshot_epoch"]) if data["snapshot_epoch"] else None
+    data["interval_seconds"] = get_deps(request).settings.monitoring.process_snapshot_interval_seconds
+    return data
+
+
 @router.get("/network")
 async def network(request: Request) -> dict[str, Any]:
     latest = get_deps(request).store.latest

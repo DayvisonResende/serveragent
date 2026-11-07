@@ -140,6 +140,12 @@ class AlertEvaluator:
                 )
             # crítico → atenção: o alerta continua ativo, sem novo evento
 
+    def restore_disk_alert(self, mountpoint: str, level: DiskLevel, since_epoch: float) -> None:
+        """Retoma um alerta de disco que já estava ativo antes de o agente reiniciar (sem novo aviso)."""
+        if level != "ok":
+            self._disk[mountpoint] = level
+            self._active_since_wall[f"disk:{mountpoint}"] = since_epoch
+
     def active(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         if self._cpu.active:

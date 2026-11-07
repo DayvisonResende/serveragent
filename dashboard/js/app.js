@@ -7,6 +7,7 @@ import * as fmt from "./format.js";
 import { h, card, meter, setMeter, severityBadge } from "./ui.js";
 import { serversPage, serverFormPage, serverDetailPage, statePill, summarize } from "./servers.js";
 import { settingsPage } from "./settings.js";
+import { approvalsPage, securityPage, actionsTable, auditTable } from "./security.js";
 
 const view = document.getElementById("view");
 const banner = document.getElementById("banner");
@@ -68,6 +69,19 @@ async function checkSession() {
   catch (err) { if (err instanceof UnauthorizedError) showUnauthorized(); return false; }
 }
 
+async function refreshApprovalBadge() {
+  const badge = document.getElementById("approvals-badge");
+  try {
+    const n = (await getJSON("/api/v1/approvals?status=pending&limit=1")).pending;
+    badge.textContent = String(n);
+    badge.hidden = n === 0;
+    state.pendingApprovals = n;
+    page?.onApprovals?.();
+  } catch (err) {
+    if (err instanceof UnauthorizedError) showUnauthorized();
+  }
+}
+
 function onLiveMessage(msg) {
   if (msg.type === "metrics") {
     const d = msg.data;
@@ -80,6 +94,7 @@ function onLiveMessage(msg) {
     page?.onMetrics?.(d);
     if (msg.servers) { state.servers = msg.servers; page?.onServers?.(msg.servers); }
   } else if (msg.type === "event") {
+    if (msg.data.event_type.startsWith("approval.")) refreshApprovalBadge();
     page?.onEvent?.(msg.data);
   }
 }
@@ -94,6 +109,11 @@ function alertsBox() {
       box.append(h("div", { class: `alert alert-${a.severity}` }, severityBadge(a.severity), h("span", { text: a.title }),
         a.since ? h("span", { class: "muted", text: `desde ${fmt.dateTime(a.since)}` }) : null));
     }
+    if (state.pendingApprovals) {
+      box.append(h("div", { class: "alert alert-warning" }, severityBadge("warning"),
+        h("span", { text: `${state.pendingApprovals} aprovação(ões) aguardando sua decisão.` }),
+        h("a", { href: "#/aprovacoes", class: "btn btn-small", text: "Ver aprovações" })));
+    }
     if (resources && resources.level !== "normal") {
       const severe = resources.level === "severe";
       box.append(h("div", { class: `alert alert-${severe ? "high" : "warning"}` }, severityBadge(severe ? "high" : "warning"),
@@ -103,12 +123,41 @@ function alertsBox() {
   return { node: box, render };
 }
 
+const LOAD_EVENTS = new Set(["resources.pressure_changed", "system.cpu_high", "system.memory_high"]);
+
 function eventItem(e) {
+  const extra = h("div");
+  const button = LOAD_EVENTS.has(e.event_type)
+    ? h("button", { type: "button", class: "btn btn-small", text: "Processos neste horário", onclick: async (ev) => {
+        ev.currentTarget.remove();
+        extra.replaceChildren(h("p", { class: "muted small", text: "Carregando…" }));
+        try { extra.replaceChildren(processesAt(await getJSON(`/api/v1/system/processes/at?ts=${new Date(e.timestamp).getTime() / 1000}`))); }
+        catch (err) { extra.replaceChildren(h("p", { class: "secondary small", text: err.message })); }
+      } })
+    : null;
   return h("li", {},
     h("time", { datetime: e.timestamp, text: fmt.dateTime(e.timestamp) }),
     h("div", {},
       h("div", {}, severityBadge(e.severity), " ", h("span", { class: "title", text: e.title })),
-      e.description ? h("div", { class: "desc", text: e.description }) : null));
+      e.description ? h("div", { class: "desc", text: e.description }) : null,
+      button, extra));
+}
+
+// "O que estava rodando naquele momento": instantâneo mais próximo dos processos mais pesados.
+function processesAt(data) {
+  if (!data.snapshot_epoch) {
+    return h("p", { class: "muted small", text: "Não há instantâneo de processos perto desse horário (são gravados a cada 5 minutos)." });
+  }
+  const sys = data.system;
+  return h("div", { class: "snapshot" },
+    h("p", { class: "muted small", text: `Instantâneo de ${fmt.dateTime(data.snapshot_at)}${sys ? ` · CPU média ${fmt.percent(sys.cpu_percent)} (pico ${fmt.percent(sys.cpu_percent_max)}), memória ${fmt.percent(sys.ram_percent)}` : ""}` }),
+    h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ...["Processo", "PID", "CPU", "Memória", "Caminho"].map((x, i) => h("th", { class: i >= 1 && i <= 3 ? "num" : null, text: x })))),
+      h("tbody", {}, ...data.processes.map((p) => h("tr", {},
+        h("td", { text: p.process_name }), h("td", { class: "num", text: p.pid }),
+        h("td", { class: "num", text: p.cpu_percent == null ? fmt.DASH : fmt.percent(p.cpu_percent) }),
+        h("td", { class: "num", text: fmt.bytes(p.memory_bytes) }),
+        h("td", { class: "path", title: p.executable_path || "", text: p.executable_path || "sem acesso" })))))));
 }
 
 function chartCard(title, series, opts) {
@@ -228,6 +277,7 @@ async function overviewPage() {
   return {
     onMetrics: paintLive,
     onServers: paintServers,
+    onApprovals: () => alerts.render(state.alerts, state.resources),
     onEvent: (e) => {
       if (activity.firstChild?.classList?.contains("muted")) activity.replaceChildren();
       activity.prepend(eventItem(e));
@@ -405,19 +455,37 @@ async function processesPage() {
 }
 
 async function historyPage() {
-  const list = h("ul", { class: "events" });
+  const tabs = { eventos: "Eventos", acoes: "Ações", auditoria: "Auditoria" };
+  let tab = "eventos";
+  const content = h("section", { class: "card" });
+  const bar = h("div", { class: "segmented", role: "tablist" });
+  let events = null;
   let severity = "";
-  const data = await getJSON("/api/v1/events?limit=500");
-  const render = () => {
-    const items = data.events.filter((e) => !severity || e.severity === severity);
-    list.replaceChildren(...(items.length ? items.map(eventItem) : [h("li", { class: "muted", text: "Nenhum evento." })]));
-  };
   const select = h("select", { "aria-label": "Filtrar por severidade", onchange: (e) => { severity = e.target.value; render(); } },
     h("option", { value: "", text: "Todas as severidades" }),
     ...Object.entries(fmt.SEVERITY).map(([k, v]) => h("option", { value: k, text: v.label })));
-  view.replaceChildren(h("div", { class: "page-head" }, h("h1", { text: "Histórico de eventos" }), select), h("section", { class: "card" }, list));
-  render();
-  return { onEvent: (e) => { data.events.unshift(e); render(); } };
+
+  const render = async () => {
+    for (const b of bar.children) b.setAttribute("aria-pressed", String(b.dataset.tab === tab));
+    select.hidden = tab !== "eventos";
+    if (tab === "eventos") {
+      events ??= (await getJSON("/api/v1/events?limit=500")).events;
+      const items = events.filter((e) => !severity || e.severity === severity);
+      content.replaceChildren(h("ul", { class: "events" }, ...(items.length ? items.map(eventItem) : [h("li", { class: "muted", text: "Nenhum evento." })])));
+    } else if (tab === "acoes") {
+      content.replaceChildren(actionsTable((await getJSON("/api/v1/actions?limit=200")).actions));
+    } else {
+      content.replaceChildren(
+        h("p", { class: "muted small", text: "Registro somente leitura: nem o dashboard nem a IA conseguem alterar ou apagar estas linhas." }),
+        auditTable((await getJSON("/api/v1/audit?limit=500")).entries));
+    }
+  };
+  for (const [key, label] of Object.entries(tabs)) {
+    bar.append(h("button", { type: "button", role: "tab", "data-tab": key, text: label, onclick: () => { tab = key; render().catch(showError); } }));
+  }
+  view.replaceChildren(h("div", { class: "page-head" }, h("h1", { text: "Histórico" }), bar, select), content);
+  await render();
+  return { onEvent: (e) => { if (events) { events.unshift(e); if (tab === "eventos") render().catch(console.error); } } };
 }
 
 // ---------------------------------------------------------------- roteamento
@@ -429,6 +497,8 @@ const routes = {
   "/historico": historyPage,
   "/servidores": () => serversPage(view),
   "/configuracoes": () => settingsPage(view),
+  "/aprovacoes": () => approvalsPage(view),
+  "/seguranca": () => securityPage(view),
 };
 
 // Rotas com parâmetro: #/servidores/novo?pid=N, #/servidores/ID, #/servidores/ID/editar
@@ -461,6 +531,7 @@ async function main() {
   document.getElementById("logout").addEventListener("click", async () => { await logout(); showUnauthorized(); });
   window.addEventListener("hashchange", navigate);
   channel = new LiveChannel({ onMessage: onLiveMessage, onState: onLiveState });
+  refreshApprovalBadge();
   await navigate();
 }
 

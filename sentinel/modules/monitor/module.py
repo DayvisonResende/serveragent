@@ -8,6 +8,7 @@ bloquear o loop — ex.: ``disk_usage`` numa unidade lenta.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -64,6 +65,7 @@ class MonitorModule(Module):
             lambda: (CpuCollector(), NetworkCollector(), ProcessCollector())
         )
         self.store.static = await asyncio.to_thread(self._static_info, context)
+        await self._restore_disk_alerts(context)
 
         m = context.settings.monitoring
         timeout = m.collector_timeout_seconds
@@ -205,6 +207,26 @@ class MonitorModule(Module):
             ),
         }
         log.info("Retenção de métricas aplicada", extra={"removed": removed})
+
+    async def _restore_disk_alerts(self, context: AgentContext) -> None:
+        """Alertas de disco sobrevivem ao reinício do agente: sem isso, cada reinício
+        repetiria o mesmo aviso (e a mesma notificação no celular)."""
+        assert self.alerts is not None
+        from datetime import datetime
+
+        rows = await context.database.fetch_all(
+            "SELECT event_type, severity, timestamp, metadata_json FROM events"
+            " WHERE event_type IN ('system.disk_space_low', 'system.disk_space_recovered') ORDER BY id DESC LIMIT 200"
+        )
+        decided: set[str] = set()
+        for row in rows:
+            mount = json.loads(row["metadata_json"]).get("mountpoint")
+            if not mount or mount in decided:
+                continue
+            decided.add(mount)  # só o evento mais recente de cada unidade importa
+            if row["event_type"] == "system.disk_space_low":
+                level = "critical" if row["severity"] == "critical" else "warning"
+                self.alerts.restore_disk_alert(mount, level, datetime.fromisoformat(row["timestamp"]).timestamp())
 
     # --------------------------------------------------------------- utilidades
 
