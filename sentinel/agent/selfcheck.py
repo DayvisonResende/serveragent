@@ -102,7 +102,9 @@ def run_selfcheck(settings: Settings) -> list[Check]:
         checks.append(Check("Status com dados reais", False, f"-> {res[0]}"))
 
     # 4b. segurança: vigia da inicialização automática e aprovações
-    res = attempt("Vigia da inicialização automática", lambda: http.raw("GET", "/api/v1/security/autostart", auth))
+    # A primeira varredura começa com o agente e leva alguns segundos (tarefas agendadas e
+    # serviços); logo após um reinício ela pode ainda estar em andamento.
+    res = attempt("Vigia da inicialização automática", lambda: _wait_first_scan(http, auth))
     if res and res[0] == 200:
         data = json.loads(res[2])
         st = data["status"]
@@ -112,7 +114,11 @@ def run_selfcheck(settings: Settings) -> list[Check]:
             detail += f"; FONTES INDISPONÍVEIS: {', '.join(st['failed_sources'])}"
         if st.get("errors"):
             detail += f"; avisos: {'; '.join(st['errors'][:3])}"
-        checks.append(Check("Vigia da inicialização automática", ok, detail if ok else f"ainda sem varredura completa ({detail})"))
+        if not ok:
+            status_res = http.raw("GET", "/api/v1/system/status", auth)
+            failing = (json.loads(status_res[2]).get("agent") or {}).get("failing_jobs", []) if status_res[0] == 200 else []
+            detail = f"sem varredura completa em 2 min ({detail})" + (f"; tarefas com falha: {', '.join(failing)}" if failing else "")
+        checks.append(Check("Vigia da inicialização automática", ok, detail))
         suspicious = [e for e in data.get("entries", []) if e.get("suspicious")]
         checks.append(Check("Itens suspeitos na inicialização (informativo)", True,
                             "nenhum" if not suspicious else " | ".join(f"{e['location']} → {e['name']}: {'; '.join(e['reasons'])}" for e in suspicious[:3])))
@@ -133,6 +139,15 @@ def run_selfcheck(settings: Settings) -> list[Check]:
     # 7. persistência
     attempt("Métricas gravadas no banco", lambda: checks.append(_check_persisted(settings)))
     return checks
+
+
+def _wait_first_scan(http: LocalClient, auth: dict[str, str], timeout: float = 120.0) -> tuple[int, dict[str, str], bytes]:
+    deadline = time.monotonic() + timeout
+    while True:
+        res = http.raw("GET", "/api/v1/security/autostart", auth)
+        if res[0] != 200 or json.loads(res[2])["status"].get("last_scan") is not None or time.monotonic() > deadline:
+            return res
+        time.sleep(3)
 
 
 def _check_websocket(http: LocalClient, cookie: str, origin: str, settings: Settings) -> Check:

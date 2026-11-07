@@ -158,6 +158,12 @@ abrir a página Assistente, `POST /ai/warmup` carrega o modelo e faz essa leitur
 enquanto o usuário digita; uma pergunta feita durante o aquecimento espera por ele
 em vez de receber 429.
 
+Validado no OptiPlex: a pergunta caiu de 36 s para 14 s (aquecimento de 17 s feito
+enquanto a página abre). No mesmo teste, o modelo repetiu uma resposta antiga do
+histórico em vez de consultar os dados. Por isso as instruções agora dizem que
+respostas anteriores podem estar desatualizadas, e o autoteste usa uma conversa
+nova a cada execução.
+
 ## D20 — Vigia ignora o vaivém automático ↔ manual de serviços do Windows
 
 O Windows Update alterna o início do BITS entre automático e manual quase todo dia,

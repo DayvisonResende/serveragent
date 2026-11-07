@@ -4,8 +4,9 @@ Roda depois da medição de consumo do agente: uma resposta do modelo ocupa a CP
 por dezenas de segundos e estragaria aquela medição.
 
 Faz uma pergunta real pelo mesmo caminho do dashboard (API → assistente →
-ferramentas → Ollama), numa conversa própria ("autoteste") para não misturar
-com as conversas do usuário. A pergunta só lê dados: nada é pedido ou executado.
+ferramentas → Ollama), numa conversa nova a cada execução: com o histórico de
+uma execução anterior, o modelo poderia repetir a resposta antiga em vez de
+consultar os dados (aconteceu no OptiPlex). A pergunta só lê dados: nada é pedido ou executado.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from sentinel.agent.selfcheck import Check
 from sentinel.modules.ai.ollama import OllamaClient, OllamaError
 
 QUESTION = "Quantos servidores estão cadastrados e em que estado cada um está?"
-CONVERSATION = "autoteste"
 
 
 def run(settings: Settings) -> list[Check]:
@@ -45,7 +45,7 @@ def run(settings: Settings) -> list[Check]:
 
     started = time.monotonic()
     try:
-        answer = http.request("POST", "/api/v1/chat", {"message": QUESTION, "conversation_id": CONVERSATION})
+        answer = http.request("POST", "/api/v1/chat", {"message": QUESTION, "conversation_id": f"autoteste-{int(time.time())}"})
     except (ApiError, OSError) as exc:
         checks.append(Check("Chat com a IA (pergunta real)", False, f"{type(exc).__name__}: {exc}"))
         return checks
