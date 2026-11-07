@@ -43,6 +43,7 @@ Atalhos de dois cliques na raiz do projeto:
 | `ligar.bat` | liga o Sentinel agora (pela tarefa agendada) |
 | `iniciar-com-windows.bat` | faz o Sentinel subir com o Windows, sem logon (pede a senha da conta) |
 | `testar-ia.bat` | baixa o modelo e mede a IA local (Ollama): velocidade, memória e uso de ferramentas |
+| `diagnosticar-ia.bat` | mede se o Ollama reaproveita a leitura das instruções entre perguntas (1–2 min) |
 | `investigar-processo.bat` | relatório **somente leitura** sobre um executável suspeito (assinatura, hash, origem, inicialização automática) |
 
 ## Uso

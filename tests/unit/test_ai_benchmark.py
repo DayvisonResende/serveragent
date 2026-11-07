@@ -67,3 +67,24 @@ def test_run_with_fake_ollama_and_think_fallback():
     assert any("raciocínio" in n for n in r.notes)
     summary = "\n".join(b.summarize(reports))
     assert "Recomendação: LFM3 falso" in summary
+
+
+def test_cache_probe_detects_identical_only_reuse():
+    """Simula um modelo híbrido: só texto idêntico ao anterior é reaproveitado."""
+    from sentinel.agent import ai_cache_probe
+    from sentinel.modules.ai.ollama import ChatResult, OllamaClient
+
+    class Hybrid(OllamaClient):
+        last = None
+
+        def chat(self, model, messages, tools=None, options=None, keep_alive="5m", think=None):
+            key = (str(messages), bool(tools))
+            tokens = 1 if key == self.last else (880 if tools else 300)
+            self.last = key
+            return ChatResult("", [], "", 1.0, 0.0, tokens, tokens / 44, 1, 0.1)
+
+    lines = []
+    rows = ai_cache_probe.probe(Hybrid(), "lfm3", "5m", lines.append)
+    assert rows["identica"]["lidos"] == 1 and rows["prefixo"]["lidos"] == 880
+    verdict = ai_cache_probe.conclude(rows)
+    assert "só reaproveita texto IDÊNTICO" in verdict[1] and "66%" in verdict[0]
