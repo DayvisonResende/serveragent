@@ -40,6 +40,7 @@ Atalhos de dois cliques na raiz do projeto:
 | `instalar.bat` / `desinstalar.bat` | instala/atualiza ou remove a tarefa agendada |
 | `ligar.bat` | liga o Sentinel agora (pela tarefa agendada) |
 | `iniciar-com-windows.bat` | faz o Sentinel subir com o Windows, sem logon (pede a senha da conta) |
+| `testar-ia.bat` | teste de viabilidade da IA local (Ollama): velocidade, memória e uso de ferramentas de cada modelo |
 | `investigar-processo.bat` | relatório **somente leitura** sobre um executável suspeito (assinatura, hash, origem, inicialização automática) |
 
 ## Uso

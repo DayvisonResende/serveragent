@@ -75,6 +75,12 @@ security:                           # aprovações e vigilância (PRD 11)
   propose_server_restart: true      # servidor gerenciado caiu sem reinício automático → pede aprovação
   autostart_scan_minutes: 10        # verificação da inicialização automática (registro, tarefas, serviços)
 
+ai:                                 # IA local via Ollama (PRD 9)
+  ollama_url: http://127.0.0.1:11434   # somente neste computador
+  model: null                       # definido após o teste de viabilidade (testar-ia.bat)
+  keep_alive_minutes: 5             # descarrega o modelo da memória após inatividade
+  timeout_seconds: 180
+
 retention:                          # dias mantidos por categoria (PRD 16.2)
   metrics_days: 30
   process_snapshots_days: 7

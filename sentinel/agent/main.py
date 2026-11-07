@@ -70,6 +70,9 @@ def main(argv: list[str] | None = None) -> int:
     check_parser.add_argument("--json", action="store_true", help="saída em JSON (ASCII), para scripts")
     check_parser.add_argument("--servers", choices=["prepare", "finish"], help="autoteste de servidores (usado pelo verificar.bat)")
     check_parser.add_argument("--costs", action="store_true", help="apenas o custo médio das tarefas do agente")
+    bench = commands.add_parser("ai-bench", help="teste de viabilidade da IA local (Ollama) neste computador")
+    bench.add_argument("--pull", action="store_true", help="baixar os modelos candidatos que faltarem (~4 GB)")
+    bench.add_argument("--model", action="append", help="testar apenas este modelo do Ollama (pode repetir)")
     srv = commands.add_parser("server", help="consulta e opera servidores cadastrados")
     srv.add_argument("action", choices=["list", "start", "stop", "restart"])
     srv.add_argument("name", nargs="?", help="nome do servidor (exceto em 'list')")
@@ -87,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_status(settings, as_json=args.json)
         if args.command == "selfcheck":
             return cmd_selfcheck(settings, as_json=args.json, servers=args.servers, costs=args.costs)
+        if args.command == "ai-bench":
+            return cmd_ai_bench(settings, args.pull, args.model)
         if args.command == "server":
             return cmd_server(settings, args.action, args.name)
         if args.command == "stop":
@@ -204,6 +209,44 @@ def cmd_selfcheck(settings: Settings, as_json: bool = False, servers: str | None
         for c in checks:
             print(f"[{'OK' if c.ok else 'FALHA':5}] {c.name} - {c.detail}")
     return EXIT_OK if checks and all(c.ok for c in checks) else EXIT_ERROR
+
+
+def cmd_ai_bench(settings: Settings, pull: bool, only: list[str] | None) -> int:
+    from sentinel.agent import ai_benchmark
+    from sentinel.modules.ai.ollama import OllamaClient, OllamaError
+
+    report_path = settings.paths.log_dir / f"ia-teste-{utc_now().astimezone().strftime('%Y%m%d-%H%M%S')}.txt"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+
+    def log(line: str) -> None:
+        print(line, flush=True)
+        lines.append(line)
+
+    client = OllamaClient(settings.ai.ollama_url, timeout=600)
+    log(f"Teste de IA local — {utc_now().astimezone().strftime('%d/%m/%Y %H:%M')}")
+    try:
+        log(f"Ollama {client.version()} respondendo em {settings.ai.ollama_url}")
+    except OllamaError as exc:
+        log(f"Ollama indisponível: {exc}")
+        log("Instale o Ollama (https://ollama.com/download), abra-o e rode este teste de novo.")
+        report_path.write_text("\n".join(lines), encoding="utf-8")
+        return EXIT_ERROR
+    import psutil as _ps
+
+    vm, disk = _ps.virtual_memory(), _ps.disk_usage(str(settings.paths.data_dir.anchor or "/"))
+    log(f"Memória livre: {vm.available / 1024**3:.1f} GB · disco livre: {disk.free / 1024**3:.1f} GB · núcleos lógicos: {_ps.cpu_count()}")
+    if pull and disk.free < 6 * 1024**3:
+        log("Pouco espaço em disco (< 6 GB): os modelos não serão baixados.")
+        pull = False
+    models = [(m, m) for m in only] if only else ai_benchmark.CANDIDATES
+    log("Durante o teste a CPU fica ocupada; servidores podem ficar mais lentos por alguns minutos.")
+    reports = ai_benchmark.run(client, pull, models, log)
+    for line in ai_benchmark.summarize(reports):
+        log(line)
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    log(f"\nRelatório salvo em: {report_path}")
+    return EXIT_OK
 
 
 def cmd_server(settings: Settings, action: str, name: str | None) -> int:

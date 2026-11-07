@@ -118,6 +118,25 @@ class ServersSettings(_Section):
     operations_window_seconds: float = Field(600, ge=60, le=86_400)  # ...nesta janela
 
 
+class AISettings(_Section):
+    """IA local (PRD 9.6). O modelo é escolhido após o teste de viabilidade (ai-bench)."""
+
+    ollama_url: str = "http://127.0.0.1:11434"
+    model: str | None = None
+    keep_alive_minutes: int = Field(5, ge=0, le=120)   # descarrega após inatividade
+    timeout_seconds: int = Field(180, ge=10, le=1800)
+
+    @field_validator("ollama_url")
+    @classmethod
+    def _local_only(cls, value: str) -> str:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(value)
+        if parsed.scheme != "http" or parsed.hostname not in _LOOPBACK_HOSTS:
+            raise ValueError("o Ollama deve estar neste computador (ex.: http://127.0.0.1:11434)")
+        return value
+
+
 class SecuritySettings(_Section):
     """Aprovações (PRD 11.3)."""
 
@@ -167,6 +186,7 @@ class Settings(_Section):
     resources: ResourceSettings = ResourceSettings()
     servers: ServersSettings = ServersSettings()
     security: SecuritySettings = SecuritySettings()
+    ai: AISettings = AISettings()
     retention: RetentionSettings = RetentionSettings()
     api: ApiSettings = ApiSettings()
 
