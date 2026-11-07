@@ -70,19 +70,48 @@ def assess(entry: AutostartEntry) -> list[str]:
     return reasons
 
 
-def collect() -> tuple[list[AutostartEntry], list[str]]:
-    """(itens, erros). Erros não interrompem a coleta: cada fonte é independente."""
-    entries: list[AutostartEntry] = []
-    errors: list[str] = []
+def source_of(location: str) -> str:
+    """Fonte (para linha de base e falhas) a partir do local do item."""
+    if location.startswith("HK"):
+        return "registro"
+    if location.startswith("Inicializar"):
+        return "pastas Inicializar"
+    if location == "Tarefa agendada":
+        return "tarefas agendadas"
+    if location == "Serviço":
+        return "serviços"
+    return "pastas de autostart"
+
+
+@dataclass
+class CollectResult:
+    entries: list[AutostartEntry]
+    failed_sources: set[str]          # fonte inteira indisponível: nada é concluído sobre ela
+    warnings: list[str]               # leituras parciais (ex.: uma chave sem permissão)
+    sources: set[str]                 # fontes consultadas
+
+    @property
+    def errors(self) -> list[str]:
+        return [f"{s}: indisponível" for s in sorted(self.failed_sources)] + self.warnings
+
+
+def collect() -> CollectResult:
+    """Cada fonte é independente; dentro do registro, cada chave também."""
+    result = CollectResult([], set(), [], set())
     sources = _windows_sources() if sys.platform == "win32" else [("pastas de autostart", _posix_autostart)]
     for label, source in sources:
+        result.sources.add(label)
         try:
-            entries.extend(source())
-        except Exception as exc:  # cada fonte falha isolada; o motivo vai para o relatório
-            errors.append(f"{label}: {type(exc).__name__}: {exc}")
+            found = source(result.warnings)
+        except Exception as exc:  # a fonte inteira falhou; o motivo vai para o relatório
+            result.failed_sources.add(label)
+            result.warnings.append(f"{label}: {type(exc).__name__}: {exc}")
             log.warning("Fonte de inicialização automática falhou", extra={"source": label, "error": str(exc)})
-    unique = {e.key: e for e in entries}
-    return list(unique.values()), errors
+            continue
+        result.entries.extend(found)
+    unique = {e.key: e for e in result.entries}
+    result.entries = list(unique.values())
+    return result
 
 
 # --------------------------------------------------------------------- Windows
@@ -96,7 +125,7 @@ def _windows_sources() -> list[tuple[str, object]]:
     ]
 
 
-def _registry() -> list[AutostartEntry]:
+def _registry(warnings: list[str]) -> list[AutostartEntry]:
     import winreg
 
     HKCU, HKLM = winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE
@@ -119,6 +148,9 @@ def _registry() -> list[AutostartEntry]:
         ("HKCU\\Windows\\Load", HKCU, nt + r"\Windows", "Load"),
     ]
     out: list[AutostartEntry] = []
+    def denied(label: str, exc: OSError) -> None:
+        warnings.append(f"registro (parcial): {label}: {exc.strerror or exc}")
+
     for label, hive, path in multi:
         try:
             with winreg.OpenKey(hive, path) as key:
@@ -132,6 +164,8 @@ def _registry() -> list[AutostartEntry]:
                     i += 1
         except FileNotFoundError:
             continue
+        except OSError as exc:  # ex.: chave protegida — as demais continuam
+            denied(label, exc)
     for label, hive, path, name in single:
         try:
             with winreg.OpenKey(hive, path) as key:
@@ -140,6 +174,8 @@ def _registry() -> list[AutostartEntry]:
                     out.append(AutostartEntry(label, name, str(value)))
         except FileNotFoundError:
             continue
+        except OSError as exc:
+            denied(f"{label}\\{name}", exc)
     try:
         with winreg.OpenKey(HKLM, nt + r"\Image File Execution Options") as ifeo:
             i = 0
@@ -155,12 +191,16 @@ def _registry() -> list[AutostartEntry]:
                         out.append(AutostartEntry("HKLM\\IFEO", sub, str(debugger)))
                 except FileNotFoundError:
                     continue
+                except OSError as exc:
+                    denied(f"HKLM\\IFEO\\{sub}", exc)
     except FileNotFoundError:
         pass
+    except OSError as exc:
+        denied("HKLM\\IFEO", exc)
     return out
 
 
-def _startup_folders() -> list[AutostartEntry]:
+def _startup_folders(warnings: list[str]) -> list[AutostartEntry]:
     out = []
     for label, var, rel in (("Inicializar (usuário)", "APPDATA", r"Microsoft\Windows\Start Menu\Programs\Startup"),
                             ("Inicializar (todos)", "ProgramData", r"Microsoft\Windows\Start Menu\Programs\Startup")):
@@ -178,7 +218,7 @@ def _startup_folders() -> list[AutostartEntry]:
     return out
 
 
-def _scheduled_tasks() -> list[AutostartEntry]:
+def _scheduled_tasks(warnings: list[str]) -> list[AutostartEntry]:
     # Colunas do CSV verbose do schtasks (fixas, independentes do idioma): 1 = nome, 8 = ação.
     result = subprocess.run(
         ["schtasks", "/query", "/fo", "csv", "/v", "/nh"], capture_output=True, timeout=90,
@@ -194,7 +234,7 @@ def _scheduled_tasks() -> list[AutostartEntry]:
     return list(out.values())
 
 
-def _services() -> list[AutostartEntry]:
+def _services(warnings: list[str]) -> list[AutostartEntry]:
     import psutil
 
     out = []
@@ -209,7 +249,7 @@ def _services() -> list[AutostartEntry]:
 
 # ----------------------------------------------------------------------- POSIX
 
-def _posix_autostart() -> list[AutostartEntry]:
+def _posix_autostart(warnings: list[str]) -> list[AutostartEntry]:
     out = []
     for folder in (Path.home() / ".config" / "autostart", Path.home() / ".config" / "systemd" / "user"):
         if folder.is_dir():

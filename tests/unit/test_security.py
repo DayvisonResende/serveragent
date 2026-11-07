@@ -198,7 +198,7 @@ def test_autostart_scan_baseline_then_detects_changes(tmp_path, monkeypatch):
          E("HKCU\\Run", "Novo", r"C:\Users\D\AppData\Roaming\svchost.exe")],
         [E("HKLM\\Winlogon", "Shell", "explorer.exe"), E("HKCU\\Run", "Novo", r"C:\Users\D\AppData\Roaming\svchost.exe")],
     ]
-    monkeypatch.setattr(autostart, "collect", lambda: (snapshots.pop(0), []))
+    monkeypatch.setattr(autostart, "collect", lambda: autostart.CollectResult(snapshots.pop(0), set(), [], {"registro"}))
 
     async def scenario():
         db = Database(tmp_path / "a.db")
@@ -206,7 +206,7 @@ def test_autostart_scan_baseline_then_detects_changes(tmp_path, monkeypatch):
         await apply_migrations(db)
         bus = EventBus()
         module = SecurityModule(servers=None)  # type: ignore[arg-type]
-        module._ctx = SimpleNamespace(event_bus=bus)
+        module._ctx = SimpleNamespace(event_bus=bus, database=db)
         from sentinel.database.repositories.autostart import AutostartRepository
         module._autostart_repo = AutostartRepository(db)
         results = []
@@ -232,3 +232,44 @@ def test_listed_actions_carry_readable_label(tmp_path):
         return await service.list("pending")
 
     assert run(scenario, tmp_path)[0]["label"] == "Reiniciar servidor"
+
+
+def test_source_that_failed_first_is_baselined_later_without_false_alarms(tmp_path, monkeypatch):
+    """Cenário real do OptiPlex: 1ª varredura sem o registro (acesso negado), 2ª com o registro."""
+    from sentinel.database.repositories.autostart import AutostartRepository
+    from sentinel.modules.security.module import SecurityModule
+    from sentinel.oslayer import autostart
+
+    task = E("Tarefa agendada", r"\OneDrive Startup", r"C:\Users\D\AppData\Local\Microsoft\OneDrive\OneDriveLauncher.exe")
+    shell = E("HKLM\\Winlogon", "Shell", r'explorer.exe, "C:\Users\D\AppData\Local\google\chrome\user data\wzone.exe" "C:\Users\D\AppData\Local\google\chrome\user data\wtime.cmd" wlocale.cmd')
+    run_key = E("HKCU\\Run", "OneDrive", r'"C:\Users\D\AppData\Local\Microsoft\OneDrive\OneDrive.exe" /background')
+    results = [
+        autostart.CollectResult([task], {"registro"}, ["registro: PermissionError"], {"registro", "tarefas agendadas"}),
+        autostart.CollectResult([task, shell, run_key], set(), ["registro (parcial): HKLM\\IFEO\\x: Acesso negado"], {"registro", "tarefas agendadas"}),
+        autostart.CollectResult([shell, run_key], {"tarefas agendadas"}, [], {"registro", "tarefas agendadas"}),
+    ]
+    monkeypatch.setattr(autostart, "collect", lambda: results.pop(0))
+
+    async def scenario():
+        db = Database(tmp_path / "b.db")
+        await db.open()
+        await apply_migrations(db)
+        bus = EventBus()
+        module = SecurityModule(servers=None)  # type: ignore[arg-type]
+        module._ctx = SimpleNamespace(event_bus=bus, database=db)
+        module._autostart_repo = AutostartRepository(db)
+        out = []
+        for _ in range(3):
+            status = await module.scan_autostart()
+            out.append((status, [(e.title, e.severity.value) for e in (bus._queue.get_nowait() for _ in range(bus._queue.qsize()))]))
+        await db.close()
+        return out
+
+    (s1, e1), (s2, e2), (s3, e3) = asyncio.run(scenario())
+    assert s1["failed_sources"] == ["registro"]
+    titles2 = [t for t, _ in e2]
+    assert ("Item suspeito na inicialização automática: Shell", "critical") in e2  # o malware é apontado
+    assert not any(t.startswith("Novo item") for t in titles2)  # registro lido pela 1ª vez: sem alarme de "novo"
+    assert any(t.startswith("Linha de base") for t in titles2)
+    assert s2["failed_sources"] == [] and "registro (parcial)" in s2["errors"][0]
+    assert not any(t.startswith("Item removido") for t, _ in e3)  # tarefas falharam: nada é dado como removido

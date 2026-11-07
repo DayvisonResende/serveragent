@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from sentinel.core.event_bus import Event, Severity
 from sentinel.core.module_registry import Module, ModuleHealth
 from sentinel.database.repositories.autostart import AutostartRepository
+from sentinel.database.repositories.settings import SettingsRepository
 from sentinel.modules.security.actions import ActionService
 from sentinel.modules.security.operations import ActionError, server_operations
 from sentinel.oslayer import autostart
@@ -24,6 +25,7 @@ log = logging.getLogger(__name__)
 PROPOSER = "sentinel:servidores"
 EVENT_AUTOSTART = "security.autostart_changed"
 EVENT_AUTOSTART_BASELINE = "security.autostart_baseline"
+SOURCES_KEY = "autostart_baselined_sources"
 STATE_LABEL = {"offline": "offline", "unresponsive": "sem resposta"}
 
 
@@ -37,7 +39,7 @@ class SecurityModule(Module):
         self.actions: ActionService | None = None
         self._unsubscribe: list[Callable[[], None]] = []
         self._autostart_repo: AutostartRepository | None = None
-        self.autostart_status: dict[str, Any] = {"last_scan": None, "errors": [], "entries": 0, "suspicious": 0}
+        self.autostart_status: dict[str, Any] = {"last_scan": None, "errors": [], "failed_sources": [], "entries": 0, "suspicious": 0}
         self._scan_lock = asyncio.Lock()
 
     async def start(self, context: AgentContext) -> None:
@@ -121,35 +123,54 @@ class SecurityModule(Module):
     # ------------------------------------------- inicialização automática
 
     async def scan_autostart(self) -> dict[str, Any]:
-        """Compara os itens atuais com a linha de base e avisa sobre mudanças (PRD 11 / segurança)."""
+        """Compara os itens atuais com a linha de base e avisa sobre mudanças.
+
+        A linha de base é por fonte (registro, tarefas, serviços…): uma fonte que
+        nunca foi lida com sucesso entra como primeira leitura — sem alertas de
+        "item novo", mas com os suspeitos apontados. Fonte que falhou nesta
+        varredura não tem itens dados como removidos.
+        """
         assert self._ctx is not None and self._autostart_repo is not None
         async with self._scan_lock:
-            entries, errors = await asyncio.to_thread(autostart.collect)
+            result = await asyncio.to_thread(autostart.collect)
+            settings_repo = SettingsRepository(self._ctx.database)
+            baselined: set[str] = set(await settings_repo.get(SOURCES_KEY, []))
             baseline = await self._autostart_repo.all()
-            current = {e.key: e for e in entries}
-            first_scan = not baseline
+            current = {e.key: e for e in result.entries}
             upserts, seen, changes = [], [], []
+            new_sources: dict[str, int] = {}
             for key, entry in current.items():
+                source = autostart.source_of(entry.location)
+                first_for_source = source not in baselined
                 reasons = autostart.assess(entry)
                 old = baseline.get(key)
                 row = {"key": key, "location": entry.location, "name": entry.name, "value": entry.value, "reasons": reasons}
+                if first_for_source:
+                    new_sources[source] = new_sources.get(source, 0) + 1
                 if old is None:
                     upserts.append(row)
-                    if not first_scan:
+                    if not first_for_source:
                         changes.append(("added", row, None))
                 elif old["value"] != entry.value or old["reasons"] != reasons:
                     upserts.append(row)
-                    changes.append(("changed", row, old["value"]))
+                    if not first_for_source:
+                        changes.append(("changed", row, old["value"]))
                 else:
                     seen.append(key)
-                if first_scan and reasons:
+                if first_for_source and reasons:
                     changes.append(("suspicious", row, None))
-            removed = [k for k in baseline if k not in current] if not errors else []  # fonte falhou: não conclui remoção
+            removed = [k for k, old in baseline.items()
+                       if k not in current and autostart.source_of(old["location"]) not in result.failed_sources]
             await self._autostart_repo.apply(upserts, removed, seen)
+            ok_sources = result.sources - result.failed_sources
+            if ok_sources - baselined:
+                await settings_repo.set(SOURCES_KEY, sorted(baselined | ok_sources))
 
-            if first_scan:
+            if new_sources:
+                parts = ", ".join(f"{src}: {n}" for src, n in sorted(new_sources.items()))
                 self._publish(EVENT_AUTOSTART_BASELINE, Severity.INFO, "Linha de base da inicialização automática registrada",
-                              f"{len(current)} itens vigiados. A partir de agora, mudanças geram alerta.", {"entries": len(current)})
+                              f"Itens vigiados ({parts}). A partir de agora, mudanças nessas fontes geram alerta.",
+                              {"sources": new_sources})
             for kind, row, old_value in changes:
                 self._report(kind, row, old_value)
             for key in removed:
@@ -158,8 +179,8 @@ class SecurityModule(Module):
                               f"{old['location']}: {old['value'][:300]}", {"location": old["location"], "name": old["name"], "change": "removed"})
 
             self.autostart_status = {
-                "last_scan": time.time(), "errors": errors, "entries": len(current),
-                "suspicious": sum(1 for e in current.values() if autostart.assess(e)),
+                "last_scan": time.time(), "errors": result.errors, "failed_sources": sorted(result.failed_sources),
+                "entries": len(current), "suspicious": sum(1 for e in current.values() if autostart.assess(e)),
             }
             return self.autostart_status
 

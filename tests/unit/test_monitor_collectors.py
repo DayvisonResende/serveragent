@@ -122,3 +122,55 @@ def test_static_process_attributes_are_read_once(monkeypatch):
     collector.collect()
     # só processos novos (surgidos entre as coletas) consultam o dono de novo
     assert len(calls) < max(5, first // 10)
+
+
+# --------------------------------------------- leitura rápida de processos (Windows)
+
+import struct  # noqa: E402
+
+from sentinel.oslayer import winproc  # noqa: E402
+
+
+def _entry(pid, ppid, name_offset, name, create_epoch, cpu_s, rss, next_offset):
+    buf = bytearray(winproc.MIN_ENTRY + 16)
+    struct.pack_into("<I", buf, winproc.OFF_NEXT, next_offset)
+    filetime = int(create_epoch * 10_000_000) + 116444736000000000 if create_epoch else 0
+    struct.pack_into("<qqq", buf, winproc.OFF_CREATE, filetime, int(cpu_s * 0.75 * 1e7), int(cpu_s * 0.25 * 1e7))
+    struct.pack_into("<H", buf, winproc.OFF_NAME_LEN, len(name.encode("utf-16-le")))
+    struct.pack_into("<Q", buf, winproc.OFF_NAME_BUF, name_offset if name else 0)
+    struct.pack_into("<QQ", buf, winproc.OFF_PID, pid, ppid)
+    struct.pack_into("<Q", buf, winproc.OFF_WORKING_SET, rss)
+    return buf
+
+
+def test_parse_system_process_information_layout():
+    size = winproc.MIN_ENTRY + 16
+    names_at = size * 3
+    names = "chrome.exe".encode("utf-16-le") + "java.exe".encode("utf-16-le")
+    buffer = (
+        _entry(0, 0, 0, "", None, 0, 0, size)
+        + _entry(1234, 4, names_at, "chrome.exe", 1_790_000_000.5, 12.0, 300 * 1024**2, size)
+        + _entry(42, 1234, names_at + 20, "java.exe", 1_790_000_100.0, 2.0, 50 * 1024**2, 0)
+        + names
+    )
+    read = lambda addr, length: bytes(buffer[addr:addr + length]).decode("utf-16-le")  # noqa: E731
+    procs = winproc.parse(bytes(buffer), 0, read)
+    assert [p.pid for p in procs] == [0, 1234, 42]
+    assert procs[0].name == "System Idle Process" and procs[0].create_time is None
+    chrome = procs[1]
+    assert chrome.name == "chrome.exe" and chrome.ppid == 4 and chrome.rss == 300 * 1024**2
+    assert chrome.cpu_seconds == pytest.approx(12.0) and chrome.create_time == pytest.approx(1_790_000_000.5)
+    assert procs[2].name == "java.exe" and procs[2].ppid == 1234
+
+
+def test_parse_rejects_truncated_buffer():
+    with pytest.raises(ValueError):
+        winproc.parse(b"\x00" * 10, 0, lambda a, n: "")
+
+
+def test_collector_falls_back_to_psutil_when_fast_path_fails(monkeypatch):
+    collector = ProcessCollector()
+    collector._fast = True
+    monkeypatch.setattr(winproc, "snapshot", lambda: (_ for _ in ()).throw(OSError("formato inesperado")))
+    procs = collector.collect()
+    assert procs and collector._fast is False  # desligou o caminho rápido e continuou funcionando

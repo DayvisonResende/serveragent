@@ -106,8 +106,12 @@ def run_selfcheck(settings: Settings) -> list[Check]:
     if res and res[0] == 200:
         data = json.loads(res[2])
         st = data["status"]
-        ok = st.get("last_scan") is not None and st.get("entries", 0) > 0
-        detail = f"{st.get('entries', 0)} itens vigiados" + (f"; fontes com erro: {'; '.join(st['errors'])}" if st.get("errors") else "")
+        ok = st.get("last_scan") is not None and st.get("entries", 0) > 0 and not st.get("failed_sources")
+        detail = f"{st.get('entries', 0)} itens vigiados"
+        if st.get("failed_sources"):
+            detail += f"; FONTES INDISPONÍVEIS: {', '.join(st['failed_sources'])}"
+        if st.get("errors"):
+            detail += f"; avisos: {'; '.join(st['errors'][:3])}"
         checks.append(Check("Vigia da inicialização automática", ok, detail if ok else f"ainda sem varredura completa ({detail})"))
         suspicious = [e for e in data.get("entries", []) if e.get("suspicious")]
         checks.append(Check("Itens suspeitos na inicialização (informativo)", True,
