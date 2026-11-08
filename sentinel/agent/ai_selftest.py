@@ -38,7 +38,7 @@ def run(settings: Settings) -> list[Check]:
     try:
         warm = http.request("POST", "/api/v1/ai/warmup")
         checks.append(Check("Aquecimento da IA (informativo)", True,
-                            f"{warm['segundos']:.0f} s para carregar o modelo e ler as instruções" if warm.get("aquecido")
+                            f"{warm['segundos']:.0f} s para carregar o modelo na memória" if warm.get("aquecido")
                             else "modelo já estava preparado"))
     except (ApiError, OSError) as exc:
         checks.append(Check("Aquecimento da IA", False, f"{type(exc).__name__}: {exc}"))

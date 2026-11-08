@@ -79,7 +79,7 @@ ai:                                 # IA local via Ollama (PRD 9)
   ollama_url: http://127.0.0.1:11434   # somente neste computador
   model: hf.co/LiquidAI/LFM3-1.7B-GGUF:Q4_K_M   # escolhido pelo testar-ia.bat (4/4 ferramentas, 12 tokens/s)
   history_messages: 6               # mensagens anteriores enviadas ao modelo (contexto curto = mais rápido)
-  max_tool_rounds: 3                # consultas encadeadas por pergunta
+  max_tool_rounds: 1                # rodadas de consulta (até 4 consultas cada); depois a IA só responde, sem reler a lista
   keep_alive_minutes: 5             # descarrega o modelo da memória após inatividade
   timeout_seconds: 180
 

@@ -29,6 +29,11 @@ class ScriptedOllama(OllamaClient):
         self.delay = delay
         self.seen = []
 
+    def load(self, name, keep_alive="5m"):
+        if self.delay:
+            time.sleep(self.delay)
+        self.loads = getattr(self, "loads", 0) + 1
+
     def chat(self, model, messages, tools=None, options=None, keep_alive="5m", think=None):
         if self.delay:
             time.sleep(self.delay)
@@ -122,7 +127,7 @@ def test_rounds_are_limited_and_final_answer_forced_without_tools(tmp_path):
         result = await assistant.ask("c1", "x")
         return result, client.seen
 
-    result, seen = run(tmp_path, script, scenario)
+    result, seen = run(tmp_path, script, scenario, settings=AISettings(max_tool_rounds=3))
     assert result["answer"] == "Resposta final." and result["rodadas"] == 4
     assert seen[-1]["tools"] == []  # última chamada sem ferramentas: o modelo precisa responder
 
@@ -234,7 +239,37 @@ def test_warm_up_reads_prompt_once_and_question_waits_for_it(tmp_path):
         again = await assistant.warm_up()  # já preparado: não repete
         return await warm, answer, again, client.seen
 
-    warm, answer, again, seen = run(tmp_path, [reply(""), reply("pronto")], scenario, delay=0.2)
+    warm, answer, again, seen = run(tmp_path, [reply("pronto")], scenario, delay=0.2)
     assert warm["aquecido"] is True and answer["answer"] == "pronto" and again["aquecido"] is False
-    assert len(seen) == 2 and seen[0]["messages"][0] == seen[1]["messages"][0]
-    assert seen[0]["tools"] == seen[1]["tools"]  # mesmas ferramentas: mesmo início de conversa
+    assert len(seen) == 1  # o aquecimento só carrega o modelo: nenhuma leitura de instruções desperdiçada
+
+
+def test_only_first_round_gets_the_tool_list_by_default(tmp_path):
+    """O LFM3 relê tudo a cada rodada: a segunda só escreve a resposta, sem a lista de ferramentas."""
+    script = [reply(calls=[{"name": "get_system_status", "arguments": {}}, {"name": "get_servers", "arguments": {}}]),
+              reply("CPU ok e nenhum servidor.")]
+
+    async def scenario(assistant, client, toolbox, db):
+        result = await assistant.ask("c1", "como está tudo?")
+        return result, client.seen
+
+    result, seen = run(tmp_path, script, scenario)
+    assert len(seen[0]["tools"]) >= 7 and seen[1]["tools"] == []
+    assert [t["ferramenta"] for t in result["ferramentas"]] == ["get_system_status", "get_servers"]  # várias numa rodada
+
+
+def test_get_servers_with_name_returns_details(tmp_path):
+    class Servers:
+        def snapshot(self):
+            return [{"server": {"id": 1, "name": "Caddy Server", "port": 80, "management": "managed"},
+                     "status": {"state_label": "offline", "cpu_percent": None, "memory_bytes": None}}]
+
+    async def scenario(assistant, client, toolbox, db):
+        toolbox._servers = Servers()
+        listed = await toolbox.call("get_servers", {})
+        details = await toolbox.call("get_servers", {"server_name": "nada"})
+        return listed, details
+
+    listed, details = run(tmp_path, [], scenario)
+    assert listed["servidores"][0]["nome"] == "Caddy Server" and listed["servidores"][0]["estado"] == "offline"
+    assert "não encontrado" in details["erro"]  # com nome: caminho dos detalhes

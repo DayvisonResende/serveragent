@@ -81,6 +81,10 @@ class OllamaClient:
                 total, done = event.get("total"), event.get("completed")
                 progress(event.get("status", ""), (done / total) if total and done is not None else None)
 
+    def load(self, name: str, keep_alive: str = "5m") -> None:
+        """Carrega o modelo na memória sem gerar nada (requisição sem prompt)."""
+        self._request("POST", "/api/generate", {"model": name, "keep_alive": keep_alive})
+
     def unload(self, name: str) -> None:
         self._request("POST", "/api/generate", {"model": name, "keep_alive": 0})
 

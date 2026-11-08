@@ -18,12 +18,13 @@ do Sentinel (PRD 9). A IA não executa nada.
 |---|---|
 | `get_system_status` | CPU, memória, discos, rede, alertas ativos |
 | `get_processes` | os processos que mais usam CPU ou memória (nomes marcados como não confiáveis) |
-| `get_servers` | servidores cadastrados e estados |
-| `get_server_details` | estado, verificações e incidentes de um servidor |
+| `get_servers` | servidores cadastrados e estados; com `server_name`, estado, verificações e incidentes de um |
 | `get_server_logs` | últimas linhas do log (não confiáveis) |
 | `get_recent_events` | eventos recentes |
 | `get_performance_history` | média e pico de CPU e memória num período |
 | `request_server_action` | **cria um pedido pendente** em Aprovações; nunca executa |
+| `get_storage_analysis` | resumo da última análise de armazenamento |
+| `request_cleanup` | cria um plano de limpeza e um pedido **pendente** |
 
 Nome de ferramenta desconhecido ou argumento inválido volta ao modelo como
 `{"erro": ...}`; nada é executado.
@@ -34,7 +35,7 @@ Nome de ferramenta desconhecido ou argumento inválido volta ao modelo como
 |---|---|---|
 | `model` | `hf.co/LiquidAI/LFM3-1.7B-GGUF:Q4_K_M` | medido em 12 tokens/s e 1,1 GB no i3-4150T (D17) |
 | `history_messages` | 6 | cada token lido custa tempo de CPU |
-| `max_tool_rounds` | 3 | depois disso, uma rodada final sem ferramentas força a resposta |
+| `max_tool_rounds` | 1 | rodadas com a lista de ferramentas (até 4 consultas cada); depois a IA só responde (D25) |
 | `keep_alive_minutes` | 5 | o Ollama libera a RAM do modelo após esse tempo sem uso |
 | `timeout_seconds` | 180 | por chamada ao modelo |
 | `ollama_url` | `http://127.0.0.1:11434` | só endereços locais são aceitos |
@@ -44,7 +45,7 @@ Nome de ferramenta desconhecido ou argumento inválido volta ao modelo como
 | Rota | Uso |
 |---|---|
 | `GET /api/v1/ai/status[?refresh=true]` | disponível?, mensagem, modelo, ocupado, preparando |
-| `POST /api/v1/ai/warmup` | carrega o modelo e lê as instruções (chamado ao abrir a página; D19) |
+| `POST /api/v1/ai/warmup` | carrega o modelo na memória (chamado ao abrir a página; D25) |
 | `POST /api/v1/chat` `{message, conversation_id?}` | 200 resposta · 429 outra pergunta em andamento · 503 IA indisponível |
 | `GET /api/v1/chat/history?conversation_id=` | mensagens da conversa (com ferramentas usadas e tempo) |
 

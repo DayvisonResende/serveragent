@@ -208,6 +208,19 @@ limite de leitura por análise; arquivos do OneDrive só na nuvem nunca são lid
 pausa sob pressão severa. Medido no Linux: ~200 mil arquivos em 17 s, 44% de um
 núcleo. A análise automática roda no máximo uma vez a cada 24 h.
 
+## D25 — O LFM3 relê tudo: menos texto e uma rodada de ferramentas
+
+`diagnosticar-ia.bat` no OptiPlex: o Ollama não reaproveita nenhuma leitura, nem
+de texto idêntico (~800 tokens a 115 tokens/s em toda chamada). Em modelos
+híbridos isso é esperado — reaproveitar exige voltar ao menos um token, o que o
+estado das convoluções não permite. A premissa da D19 (reaproveitar o início da
+conversa) não vale para este modelo. Mudanças: o aquecimento só carrega o modelo;
+instruções e descrições das ferramentas encurtadas (−24% de texto;
+`get_server_details` virou `get_servers` com `server_name`); e, por padrão
+(`max_tool_rounds: 1`), só a primeira rodada recebe a lista de ferramentas — nela
+o modelo pode pedir até 4 consultas de uma vez; a segunda rodada só escreve a
+resposta e lê ~400 tokens em vez de ~1000.
+
 ## Decisões futuras já identificadas
 
 - **Fase 4 — Aprovações:** vincular cada aprovação a um hash de

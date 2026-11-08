@@ -65,6 +65,7 @@ def conclude(rows: dict[str, dict[str, float]]) -> list[str]:
         out.append("RESULTADO: o Ollama só reaproveita texto IDÊNTICO; com outra pergunta, relê tudo "
                    "(limitação de modelos híbridos como o LFM3). Aquecer não ajuda; o que ajuda é ler menos texto.")
     else:
-        out.append("RESULTADO: o Ollama não reaproveita nada entre chamadas (nem texto idêntico). "
-                   "Pode ser configuração do Ollama (ex.: OLLAMA_NUM_PARALLEL) ou da versão.")
+        out.append("RESULTADO: o Ollama não reaproveita nada entre chamadas, nem texto idêntico. Em modelos híbridos "
+                   "(como o LFM3) isso é esperado: reaproveitar exigiria voltar pelo menos um token, o que esse tipo de "
+                   "modelo não permite. Toda pergunta relê tudo; o que ajuda é ler menos texto.")
     return out

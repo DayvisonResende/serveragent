@@ -49,7 +49,10 @@ class Tool:
 
 
 def _obj(properties: dict[str, Any] | None = None, required: list[str] | None = None) -> dict[str, Any]:
-    return {"type": "object", "properties": properties or {}, "required": required or []}
+    schema: dict[str, Any] = {"type": "object", "properties": properties or {}}
+    if required:
+        schema["required"] = required
+    return schema
 
 
 def _clean(text: str, limit: int = 300) -> str:
@@ -89,23 +92,21 @@ class ToolBox:
         self._security = security
         self._alerts = alerts
         self._live_seconds = live_history_seconds
-        severities = {"type": "string", "enum": ["info", "warning", "high", "critical"]}
+        # Descrições curtas de propósito: o LFM3 relê tudo a cada rodada (D25) e as
+        # ferramentas eram 2/3 do texto lido. Parâmetros opcionais usam os padrões.
+        name = {"server_name": {"type": "string"}}
         self.tools: dict[str, Tool] = {t.name: t for t in [
-            Tool("get_system_status", "Estado atual do computador: CPU, memória, discos, rede, alertas.", _obj(), self._system_status),
-            Tool("get_processes", "Processos que mais usam CPU ou memória agora.",
-                 _obj({"sort_by": {"type": "string", "enum": ["cpu", "memory"]}, "limit": {"type": "integer"}}, ["sort_by"]), self._processes),
-            Tool("get_servers", "Lista dos servidores cadastrados e seus estados.", _obj(), self._servers_list),
-            Tool("get_server_details", "Detalhes de um servidor: estado, verificações, incidentes.",
-                 _obj({"server_name": {"type": "string"}}, ["server_name"]), self._server_details),
-            Tool("get_server_logs", "Últimas linhas do log de um servidor.",
-                 _obj({"server_name": {"type": "string"}, "lines": {"type": "integer"}}, ["server_name"]), self._server_logs),
-            Tool("get_recent_events", "Eventos recentes: quedas, alertas, operações.",
-                 _obj({"limit": {"type": "integer"}, "min_severity": severities}), self._recent_events),
-            Tool("get_performance_history", "Média e pico de CPU e memória num período.",
+            Tool("get_system_status", "CPU, memória, discos, rede e alertas agora.", _obj(), self._system_status),
+            Tool("get_processes", "Processos que mais usam CPU ou memória.",
+                 _obj({"sort_by": {"type": "string", "enum": ["cpu", "memory"]}}, ["sort_by"]), self._processes),
+            Tool("get_servers", "Servidores e estados. Com server_name: detalhes e incidentes.", _obj(name), self._servers_or_details),
+            Tool("get_server_logs", "Últimas linhas do log de um servidor.", _obj(name, ["server_name"]), self._server_logs),
+            Tool("get_recent_events", "Eventos recentes: quedas, alertas, operações.", _obj(), self._recent_events),
+            Tool("get_performance_history", "Média e pico de CPU e memória.",
                  _obj({"period": {"type": "string", "enum": ["1h", "24h", "7d"]}}, ["period"]), self._history),
-            Tool("request_server_action", "Pede ao usuário aprovação para iniciar, parar ou reiniciar um servidor. Não executa nada.",
-                 _obj({"server_name": {"type": "string"}, "action": {"type": "string", "enum": ["start", "stop", "restart"]},
-                       "reason": {"type": "string"}}, ["server_name", "action", "reason"]), self._request_action),
+            Tool("request_server_action", "Pede ao usuário aprovação para iniciar, parar ou reiniciar um servidor.",
+                 _obj({**name, "action": {"type": "string", "enum": ["start", "stop", "restart"]}, "reason": {"type": "string"}},
+                      ["server_name", "action", "reason"]), self._request_action),
         ]}
         if storage is not None:
             self.tools.update({t.name: t for t in self._storage_tools()})
@@ -113,9 +114,8 @@ class ToolBox:
     def _storage_tools(self) -> list[Tool]:
         categories = {"type": "string", "enum": ["temp", "old_log", "duplicate", "large"]}
         return [
-            Tool("get_storage_analysis", "Resultado da última análise de disco: o que ocupa espaço e o que pode ser limpo.",
-                 _obj(), self._storage_analysis),
-            Tool("request_cleanup", "Pede ao usuário aprovação para mover arquivos de uma categoria para a quarentena. Não executa nada.",
+            Tool("get_storage_analysis", "O que ocupa o disco e o que pode ser limpo.", _obj(), self._storage_analysis),
+            Tool("request_cleanup", "Pede ao usuário aprovação para mover uma categoria de arquivos para a quarentena.",
                  _obj({"category": categories, "reason": {"type": "string"}}, ["category", "reason"]), self._request_cleanup),
         ]
 
@@ -199,6 +199,9 @@ class ToolBox:
                 return item["server"]["id"], names
         partial = [i for i in items if key and key in re.sub(r"\W", "", i["server"]["name"].lower())]
         return (partial[0]["server"]["id"], names) if len(partial) == 1 else (None, names)
+
+    async def _servers_or_details(self, args: dict[str, Any]) -> dict[str, Any]:
+        return await (self._server_details(args) if args.get("server_name") else self._servers_list(args))
 
     async def _server_details(self, args: dict[str, Any]) -> dict[str, Any]:
         if self._servers is None:
