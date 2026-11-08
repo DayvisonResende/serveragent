@@ -65,6 +65,8 @@ python -m sentinel server list    # servidores cadastrados e seus estados
 python -m sentinel server restart <nome>   # também: start, stop
 ```
 
+No dashboard, **Ctrl+K** abre a paleta de comandos: ir para qualquer página ou disparar ações (analisar o disco, nova conversa…).
+
 Códigos de saída: `0` ok · `1` erro · `2` configuração · `3` outra instância em execução · `4` banco.
 
 Erros anteriores ao início do log (ex.: sob `pythonw.exe`, sem console) ficam em

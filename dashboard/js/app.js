@@ -10,6 +10,10 @@ import { settingsPage } from "./settings.js";
 import { approvalsPage, securityPage, actionsTable, auditTable } from "./security.js";
 import { assistantPage, aiPill } from "./assistant.js";
 import { storagePage } from "./storage.js";
+import { buildShell, setupPalette } from "./shell.js";
+import { icon } from "./icons.js";
+
+buildShell();  // a barra lateral (e o selo de aprovações) existe antes de qualquer página
 
 const view = document.getElementById("view");
 const banner = document.getElementById("banner");
@@ -190,6 +194,91 @@ function summaryLine(node, items) {
   node.replaceChildren(...items.map(([label, value]) => h("span", {}, `${label}: `, h("strong", { text: value }))));
 }
 
+// ---------------------------------------------------------------- painel de comando
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// Minigráfico de tendência para um indicador (uma série: o título do cartão já a nomeia).
+function sparkline(slot) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  for (const [k, v] of Object.entries({ viewBox: "0 0 120 32", preserveAspectRatio: "none", class: "spark", "aria-hidden": "true" })) svg.setAttribute(k, v);
+  const area = document.createElementNS(SVG_NS, "path");
+  area.setAttribute("class", `spark-area fill-${slot}`);
+  const line = document.createElementNS(SVG_NS, "path");
+  line.setAttribute("class", `spark-line stroke-${slot}`);
+  svg.append(area, line);
+  return {
+    node: svg,
+    set(values, max = 100) {
+      const v = values.filter((x) => x != null);
+      if (v.length < 2) { line.removeAttribute("d"); area.removeAttribute("d"); return; }
+      const pts = v.map((y, i) => [(i / (v.length - 1)) * 120, 30 - (Math.min(y, max) / max) * 27]);
+      const d = pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
+      line.setAttribute("d", d);
+      area.setAttribute("d", `${d} L120 32 L0 32 Z`);
+    },
+  };
+}
+
+function greeting() {
+  const hour = new Date().getHours();
+  return hour < 5 ? "Boa madrugada" : hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
+}
+
+// O que merece atenção agora, do mais grave para o mais leve. Status sempre com texto (nunca só cor).
+function attentionItems({ alerts, servers, pending, resources }) {
+  const items = [];
+  const rank = { critical: 3, high: 2, warning: 1 };
+  for (const a of alerts || []) items.push({ level: a.severity === "critical" || a.severity === "high" ? "critical" : "warning", text: a.title, href: "#/sistema" });
+  const offline = (servers || []).filter((i) => i.status.state === "offline");
+  if (offline.length) items.push({ level: "critical", href: "#/servidores",
+    text: offline.length === 1 ? `${offline[0].server.name} está fora do ar` : `${offline.length} servidores fora do ar: ${offline.map((i) => i.server.name).join(", ")}` });
+  const troubled = (servers || []).filter((i) => ["degraded", "unresponsive"].includes(i.status.state));
+  if (troubled.length) items.push({ level: "warning", href: "#/servidores", text: `${troubled.length} servidor(es) com problemas` });
+  if (pending) items.push({ level: "warning", href: "#/aprovacoes", text: `${pending} aprovação(ões) aguardando você` });
+  if (resources && resources.level !== "normal") items.push({ level: "warning", href: "#/sistema",
+    text: resources.level === "severe" ? "Computador sob pressão severa" : "Computador sob pressão" });
+  return items.sort((a, b) => (rank[b.level] || 0) - (rank[a.level] || 0));
+}
+
+function heroPanel() {
+  const orb = h("div", { class: "orb" });
+  const eyebrow = h("div", { class: "eyebrow" });
+  const title = h("h1", { class: "hero-title" });
+  const lead = h("p", { class: "hero-lead" });
+  const chips = h("div", { class: "hero-chips" });
+  const time = h("div", { class: "hero-time" });
+  const date = h("div", { class: "hero-date" });
+  const meta = h("div", { class: "hero-meta" });
+  const node = h("section", { class: "hero", "aria-live": "polite" },
+    orb, h("div", { class: "hero-body" }, eyebrow, title, lead, chips), h("div", { class: "hero-side" }, time, date, meta));
+  return {
+    node,
+    render(ctx) {
+      const items = attentionItems(ctx);
+      const level = items.some((i) => i.level === "critical") ? "critical" : items.length ? "warning" : "good";
+      node.dataset.level = level;
+      orb.replaceChildren(h("span", { class: "orb-core" }, icon(level === "good" ? "check" : "alert", 26)),
+        h("span", { class: "visually-hidden", text: { good: "Estado: bom", warning: "Estado: atenção", critical: "Estado: crítico" }[level] }));
+      eyebrow.textContent = `${greeting()} · ${ctx.host || "este computador"}`;
+      title.textContent = level === "good" ? "Tudo em ordem" : `${items.length} ${items.length === 1 ? "ponto" : "pontos"} de atenção`;
+      const total = (ctx.servers || []).length;
+      const online = (ctx.servers || []).filter((i) => i.status.state === "online").length;
+      lead.textContent = level === "good"
+        ? `${total ? `${online} de ${total} servidor(es) no ar` : "Nenhum servidor cadastrado"}, recursos tranquilos e nenhuma decisão pendente.`
+        : "O Sentinel continua vigiando. Estes itens pedem um olhar seu:";
+      chips.replaceChildren(...items.slice(0, 5).map((i) => h("a", { class: `chip-link chip-${i.level}`, href: i.href },
+        h("span", { class: "chip-dot", "aria-hidden": "true" }), h("span", { text: i.text }), icon("arrow", 14))));
+      const now = new Date();
+      time.textContent = now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+      const longDate = now.toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+      date.textContent = longDate.charAt(0).toUpperCase() + longDate.slice(1);  // "Sábado, 7 de novembro"
+      meta.textContent = [ctx.uptime ? `ligado há ${ctx.uptime}` : null, ctx.ai ? `IA ${ctx.ai.available ? "disponível" : "indisponível"}` : null]
+        .filter(Boolean).join(" · ");
+    },
+  };
+}
+
 // ---------------------------------------------------------------- páginas
 
 async function overviewPage() {
@@ -202,22 +291,27 @@ async function overviewPage() {
   if (!state.live.length) state.live = metrics.points;
   state.alerts = status.alerts;
   state.resources = status.resources;
+  let current = status;
 
   const alerts = alertsBox();
+  const hero = heroPanel();
+  let serverList = servers ? servers.servers : null;
   const t = {
-    cpu: tile("CPU"), mem: tile("Memória"), disk: tile("Disco"), net: tile("Rede"), up: tile("Ligado há"), temp: tile("Temperatura"),
+    cpu: tile("CPU", 1), mem: tile("Memória", 2), disk: tile("Disco"), net: tile("Rede"), up: tile("Ligado há"), temp: tile("Temperatura"),
   };
   const cpuRam = percentChart("CPU e memória — últimos 15 min");
   const net = networkChart("Rede — últimos 15 min");
   const agentBox = h("div");
   const serversBox = h("div");
   const paintServers = (list) => {
+    serverList = list;
+    paintHero();
     if (!list) { serversBox.replaceChildren(h("p", { class: "muted", text: "Módulo de servidores indisponível." })); return; }
     const c = summarize(list);
     serversBox.replaceChildren(
       h("div", { class: "server-counts" },
         ...[["Total", c.total], ["Online", c.online], ["Offline", c.offline], ["Com problemas", c.problems]].map(([label, n]) =>
-          h("div", {}, h("div", { class: "value num", text: String(n) }), h("div", { class: "muted small", text: label })))),
+          h("div", {}, h("div", { class: "value", text: String(n) }), h("div", { class: "muted small", text: label })))),
       list.length
         ? h("ul", { class: "server-list" }, ...list.map((i) => h("li", {}, h("a", { href: `#/servidores/${i.server.id}`, text: i.server.name }), statePill(i.status.state))))
         : h("p", { class: "muted", text: "Nenhum servidor cadastrado." }, " ", h("a", { href: "#/servidores/novo", text: "Cadastrar" })));
@@ -228,8 +322,7 @@ async function overviewPage() {
   if (!events.events.length) activity.append(h("li", { class: "muted", text: "Nenhum evento registrado." }));
 
   view.replaceChildren(
-    h("div", { class: "page-head" }, h("h1", { text: status.machine?.hostname || "Visão geral" }),
-      h("span", { class: "muted", text: status.machine?.cpu_model || "" })),
+    hero.node,
     alerts.node,
     h("div", { class: "grid tiles" }, ...Object.values(t).map((x) => x.node)),
     h("div", { class: "grid two" }, card("Servidores", serversBox), card("Atividade recente", activity)),
@@ -237,7 +330,10 @@ async function overviewPage() {
     card("Estado do Sentinel", agentBox),
   );
 
-  let current = status;
+  function paintHero() {
+    hero.render({ alerts: state.alerts, servers: serverList, pending: state.pendingApprovals, resources: state.resources,
+      host: current?.machine?.hostname, uptime: current?.machine ? fmt.duration(current.machine.uptime_seconds) : null, ai: current?.ai });
+  }
   const paintStatic = (s) => {
     const m = s.machine;
     t.up.set(m ? fmt.duration(m.uptime_seconds) : fmt.DASH, m ? `desde ${fmt.dateTime(m.boot_time)}` : "");
@@ -258,13 +354,16 @@ async function overviewPage() {
     t.cpu.set(fmt.percent(d.cpu.percent), [cores ? `${cores} núcleos lógicos` : null, d.cpu.frequency_mhz ? `${fmt.number(d.cpu.frequency_mhz)} MHz` : null].filter(Boolean).join(" · "), d.cpu.percent);
     t.mem.set(fmt.percent(d.memory.percent), `${fmt.bytes(d.memory.used)} de ${fmt.bytes(d.memory.total)}`, d.memory.percent);
     if (d.network.download_bps == null) t.net.set("Medindo…", "aguardando a segunda leitura");
-    else t.net.set(`↓ ${fmt.bitrate(d.network.download_bps)}`, `↑ ${fmt.bitrate(d.network.upload_bps)}`);
+    else t.net.set(fmt.compactBitrate(d.network.download_bps), `download · envio ${fmt.bitrate(d.network.upload_bps)}`);
     const now = d.ts_epoch;
     cpuRam.chart.setData(state.live, [now - LIVE_WINDOW, now]);
     net.chart.setData(state.live, [now - LIVE_WINDOW, now]);
     cpuRam.setTable(state.live);
     net.setTable(state.live);
+    t.cpu.spark?.set(state.live.map((p) => p.cpu));
+    t.mem.spark?.set(state.live.map((p) => p.ram));
     alerts.render(state.alerts, state.resources);
+    paintHero();
   };
 
   paintStatic(status);
@@ -279,7 +378,7 @@ async function overviewPage() {
   return {
     onMetrics: paintLive,
     onServers: paintServers,
-    onApprovals: () => alerts.render(state.alerts, state.resources),
+    onApprovals: () => { alerts.render(state.alerts, state.resources); paintHero(); },
     onEvent: (e) => {
       if (activity.firstChild?.classList?.contains("muted")) activity.replaceChildren();
       activity.prepend(eventItem(e));
@@ -289,17 +388,20 @@ async function overviewPage() {
   };
 }
 
-function tile(label) {
-  const value = h("div", { class: "value num", text: fmt.DASH });
+function tile(label, sparkSlot = null) {
+  const value = h("div", { class: "value", text: fmt.DASH });  // número grande: algarismos proporcionais
   const detail = h("div", { class: "detail" });
   const bar = meter(0);
   bar.hidden = true;
-  const node = h("section", { class: "card tile" }, h("h3", { text: label }), value, detail, bar);
+  const spark = sparkSlot ? sparkline(sparkSlot) : null;
+  const node = h("section", { class: `card tile${spark ? " tile-spark" : ""}` }, h("h3", { text: label }), value, detail, spark?.node, bar);
   return {
     node,
+    spark,
     set(v, d, pct) {
       value.textContent = v;
       detail.textContent = d || "";
+      if (spark) pct = null;  // com minigráfico, a barra seria redundante
       bar.hidden = pct == null;
       if (pct != null) setMeter(bar, pct);
     },
@@ -519,7 +621,11 @@ function resolve(hash) {
 
 async function navigate() {
   const { section, run } = resolve(location.hash.slice(1) || "/");
-  for (const a of document.querySelectorAll(".nav a")) a.classList.toggle("active", a.dataset.route === section);
+  for (const a of document.querySelectorAll(".nav a")) {
+    const on = a.dataset.route === section;
+    a.classList.toggle("active", on);
+    if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  }
   page?.destroy?.();
   page = null;
   try {
@@ -535,6 +641,7 @@ async function main() {
   document.getElementById("logout").addEventListener("click", async () => { await logout(); showUnauthorized(); });
   window.addEventListener("hashchange", navigate);
   channel = new LiveChannel({ onMessage: onLiveMessage, onState: onLiveState });
+  setupPalette();
   refreshApprovalBadge();
   await navigate();
 }

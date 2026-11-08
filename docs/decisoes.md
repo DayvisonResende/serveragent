@@ -233,6 +233,17 @@ modelo. O autoteste agora exige que a resposta cite os servidores cadastrados e
 mostra o tempo por partes (leitura, escrita, resto) para a próxima decisão sobre
 velocidade ser tomada com números.
 
+## D27 — Redesenho do dashboard: console premium, sem nada externo
+
+Barra lateral com seções (Monitorar, Operar, Inteligência, Registro) no lugar do
+menu de 11 itens; painel de comando na visão geral (estado geral com ícone e
+texto, itens de atenção com atalho, hora e tempo ligado); indicadores com
+minigráfico dos últimos 15 min; paleta de comandos (Ctrl+K). Tudo local — ícones
+SVG próprios, fonte do sistema —, porque a CSP só permite recursos do próprio
+Sentinel. A paleta dos gráficos foi revalidada contra a superfície nova (#11141b):
+todas as verificações passam. Sem velocímetros nem roscas; números grandes com
+algarismos proporcionais; animações desligadas para quem prefere menos movimento.
+
 ## Decisões futuras já identificadas
 
 - **Fase 4 — Aprovações:** vincular cada aprovação a um hash de

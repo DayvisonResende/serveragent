@@ -3,37 +3,40 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>Sentinel</title>
   <link rel="stylesheet" href="/css/app.css">
   <script type="module" src="/js/app.js"></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">Sentinel</div>
-    <nav class="nav" aria-label="Navegação principal">
-      <a href="#/" data-route="/">Visão geral</a>
-      <a href="#/servidores" data-route="/servidores">Servidores</a>
-      <a href="#/sistema" data-route="/sistema">Sistema</a>
-      <a href="#/processos" data-route="/processos">Processos</a>
-      <a href="#/armazenamento" data-route="/armazenamento">Armazenamento</a>
-      <a href="#/assistente" data-route="/assistente">Assistente</a>
-      <a href="#/aprovacoes" data-route="/aprovacoes">Aprovações <span id="approvals-badge" class="badge" hidden>0</span></a>
-      <a href="#/seguranca" data-route="/seguranca">Segurança</a>
-      <a href="#/historico" data-route="/historico">Histórico</a>
-      <a href="#/configuracoes" data-route="/configuracoes">Configurações</a>
-    </nav>
-    <div class="topbar-status">
-      <span id="live-status" class="pill pill-muted" role="status">Conectando…</span>
-      <button id="logout" class="link-button" type="button">Sair</button>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar" aria-label="Navegação">
+      <a class="brand" id="brand" href="#/" aria-label="Sentinel — visão geral"></a>
+      <button class="palette-trigger" id="palette-open" type="button">
+        <span class="palette-trigger-label">Buscar ou executar</span>
+        <kbd id="palette-hint">Ctrl K</kbd>
+      </button>
+      <nav class="nav" id="nav" aria-label="Navegação principal"></nav>
+      <div class="sidebar-foot">
+        <span id="live-status" class="pill pill-muted" role="status">Conectando…</span>
+        <button id="logout" class="link-button" type="button">Sair</button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="mobilebar">
+        <button id="menu-toggle" class="icon-button" type="button" aria-label="Abrir menu" aria-controls="sidebar" aria-expanded="false"></button>
+        <span class="mobile-brand" id="mobile-brand">Sentinel</span>
+      </header>
+      <div id="banner" class="banner" hidden role="alert"></div>
+      <main id="view" class="view" tabindex="-1">
+        <div class="loading" aria-label="Carregando"><span></span><span></span><span></span></div>
+      </main>
     </div>
-  </header>
+  </div>
 
-  <div id="banner" class="banner" hidden role="alert"></div>
-
-  <main id="view" class="view" tabindex="-1">
-    <p class="muted">Carregando…</p>
-  </main>
-
+  <div class="scrim" id="scrim" hidden></div>
+  <dialog class="palette" id="palette" aria-label="Paleta de comandos"></dialog>
   <div id="tooltip" class="tooltip" hidden></div>
 </body>
 </html>

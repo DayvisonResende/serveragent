@@ -111,7 +111,7 @@ export async function storagePage(view) {
   function summaryTiles(s) {
     const cats = s.categories || {};
     const tile = (label, value, detail) => h("div", { class: "card tile" },
-      h("div", { class: "muted small", text: label }), h("div", { class: "value num", text: value }), h("div", { class: "detail", text: detail }));
+      h("div", { class: "muted small", text: label }), h("div", { class: "value", text: value }), h("div", { class: "detail", text: detail }));
     return h("div", { class: "grid tiles section-gap" },
       tile("Pode ser limpo (estimativa)", fmt.bytes(s.recoverable_bytes), "nas pastas autorizadas; não é promessa"),
       ...["temp", "old_log", "duplicate"].map((k) => tile(CATEGORY[k][0], fmt.bytes(cats[k]?.cleanable_bytes || 0),
