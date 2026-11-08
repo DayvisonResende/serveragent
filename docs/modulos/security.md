@@ -55,3 +55,7 @@ enxerga ficam de fora; não substitui um antivírus (PRD 1.4).
 
 Trocas de início automático ↔ manual de serviços do Windows (System32) com o mesmo
 programa não geram alerta (D20): o Windows Update faz isso sozinho com o BITS.
+
+Outros módulos acrescentam operações ao catálogo com `ActionService.register` (ex.: a
+limpeza registra `cleanup_quarantine`, `quarantine_restore` e `quarantine_delete`; ver
+[storage.md](storage.md)). `resolve` pode ser síncrono ou assíncrono.

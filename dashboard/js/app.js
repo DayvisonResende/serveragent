@@ -9,6 +9,7 @@ import { serversPage, serverFormPage, serverDetailPage, statePill, summarize } f
 import { settingsPage } from "./settings.js";
 import { approvalsPage, securityPage, actionsTable, auditTable } from "./security.js";
 import { assistantPage, aiPill } from "./assistant.js";
+import { storagePage } from "./storage.js";
 
 const view = document.getElementById("view");
 const banner = document.getElementById("banner");
@@ -501,6 +502,7 @@ const routes = {
   "/aprovacoes": () => approvalsPage(view),
   "/seguranca": () => securityPage(view),
   "/assistente": () => assistantPage(view),
+  "/armazenamento": () => storagePage(view),
 };
 
 // Rotas com parâmetro: #/servidores/novo?pid=N, #/servidores/ID, #/servidores/ID/editar

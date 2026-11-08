@@ -394,6 +394,9 @@ class ServersModule(Module):
     def get_record(self, server_id: int) -> ServerRecord | None:
         return self._servers.get(server_id)
 
+    def records(self) -> list[ServerRecord]:
+        return list(self._servers.values())
+
     def get_status(self, server_id: int) -> ServerStatus | None:
         return self._status.get(server_id)
 

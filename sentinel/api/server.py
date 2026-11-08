@@ -28,6 +28,7 @@ from sentinel.core.module_registry import Module, ModuleHealth
 from sentinel.database.repositories import AuthRepository
 from sentinel.modules.monitor.store import FastSample, MetricsStore
 from sentinel.modules.ai.module import AIModule
+from sentinel.modules.cleaner.module import CleanerModule
 from sentinel.modules.notifications.manager import NotificationsModule
 from sentinel.modules.security.module import SecurityModule
 from sentinel.modules.servers.manager import ServersModule
@@ -60,6 +61,7 @@ class ApiModule(Module):
         notifications: NotificationsModule | None = None,
         security: SecurityModule | None = None,
         ai: AIModule | None = None,
+        storage: CleanerModule | None = None,
     ) -> None:
         self._store = store
         self._health = health_provider
@@ -68,6 +70,7 @@ class ApiModule(Module):
         self._notifications = notifications
         self._security = security
         self._ai = ai
+        self._storage = storage
         self.hub = WebSocketHub()
         self._server: _EmbeddedServer | None = None
         self._task: asyncio.Task[None] | None = None
@@ -96,6 +99,7 @@ class ApiModule(Module):
             notifications=self._notifications,
             security=self._security,
             ai=self._ai,
+            storage=self._storage,
         )
         config = uvicorn.Config(
             create_app(deps),

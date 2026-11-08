@@ -13,7 +13,8 @@
       6. API, segurança, login, tempo real e gravação de métricas (sentinel selfcheck)
       7. Servidores: cadastro, início, queda, incidente, reinício e independência do Sentinel
       8. Consumo de memória e CPU do processo real do agente (após 60 s de aquecimento)
-      9. IA local: Ollama, modelo e uma pergunta real ao assistente (por último: usa muita CPU)
+      9. Limpeza: análise, quarentena, restauração e exclusão com arquivos de teste em %TEMP%
+     10. IA local: Ollama, modelo e uma pergunta real ao assistente (por último: usa muita CPU)
     O relatório é salvo em logs\verificacao-AAAAMMDD-HHMMSS.txt e aberto no Bloco de Notas.
     A verificação de reinício do computador continua manual.
 #>
@@ -272,8 +273,13 @@ try {
     }
     Write-Report ""
 
-    # 9. IA local --------------------------------------------------------------
-    Write-Report "== 9. IA local (uma pergunta real; pode levar 1 a 3 minutos) =="
+    # 9. Limpeza ---------------------------------------------------------------
+    Write-Report "== 9. Limpeza (arquivos de teste em %TEMP%; analisa Temp e Downloads, só leitura) =="
+    Add-Checks (& $Py -m sentinel selfcheck --json --storage 2>$null | Out-String) "Autoteste da limpeza"
+    Write-Report ""
+
+    # 10. IA local -------------------------------------------------------------
+    Write-Report "== 10. IA local (uma pergunta real; pode levar 1 a 3 minutos) =="
     Write-Report "  Perguntando ao assistente: quantos servidores existem e em que estado..."
     Add-Checks (& $Py -m sentinel selfcheck --json --ai 2>$null | Out-String) "Autoteste da IA"
     Write-Report ""

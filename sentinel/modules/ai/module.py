@@ -18,6 +18,7 @@ from sentinel.modules.ai.tools import ToolBox
 
 if TYPE_CHECKING:
     from sentinel.core.context import AgentContext
+    from sentinel.modules.cleaner.module import CleanerModule
     from sentinel.modules.monitor.store import MetricsStore
     from sentinel.modules.security.module import SecurityModule
     from sentinel.modules.servers.manager import ServersModule
@@ -29,12 +30,14 @@ class AIModule(Module):
     name = "ai"
 
     def __init__(self, store: MetricsStore, servers: ServersModule | None, security: SecurityModule | None,
-                 alerts: Callable[[], list[dict[str, Any]]], client: OllamaClient | None = None) -> None:
+                 alerts: Callable[[], list[dict[str, Any]]], client: OllamaClient | None = None,
+                 storage: CleanerModule | None = None) -> None:
         self._store = store
         self._servers = servers
         self._security = security
         self._alerts = alerts
         self._client = client
+        self._storage = storage
         self._ctx: AgentContext | None = None
         self.assistant: Assistant | None = None
         self.status: dict[str, Any] = {"available": None, "message": "verificando…", "model": None, "ollama_version": None}
@@ -44,7 +47,7 @@ class AIModule(Module):
         ai = context.settings.ai
         self._client = self._client or OllamaClient(ai.ollama_url, timeout=ai.timeout_seconds)
         toolbox = ToolBox(self._store, context.database, self._servers, self._security, self._alerts,
-                          context.settings.monitoring.live_history_seconds)
+                          context.settings.monitoring.live_history_seconds, self._storage)
         self.assistant = Assistant(self._client, toolbox, context.database, ai)
         self.status["model"] = ai.model
         context.scheduler.add_job("ai.status", self.refresh_status, 60, timeout=20, run_immediately=True)

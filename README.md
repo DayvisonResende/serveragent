@@ -3,13 +3,13 @@
 Agente local de administração, monitoramento e manutenção de servidores Windows.
 Especificação completa em [PRD.md](PRD.md).
 
-**Estado atual:** Fase 5 — IA local. Monitoramento (Fase 2), servidores (Fase 3),
-aprovações e auditoria (Fase 4) e agora um **assistente** no dashboard: você pergunta
-em português ("algum servidor está com problema?") e a IA local (Ollama, modelo
-LFM3-1.7B) consulta os dados reais do Sentinel antes de responder. A IA não executa
-nada: pedidos para iniciar, parar ou reiniciar servidores viram itens em
-**Aprovações**. O monitoramento não depende da IA: com o Ollama desligado, só o
-assistente fica indisponível.
+**Estado atual:** Fase 6 — Limpeza e diagnóstico. Monitoramento (Fase 2),
+servidores (Fase 3), aprovações e auditoria (Fase 4), assistente com IA local (Fase 5)
+e agora a página **Armazenamento**: mostra o que ocupa o disco, encontra
+temporários e logs antigos, arquivos grandes e duplicados, e move o que você
+escolher para uma **quarentena** de onde tudo pode ser restaurado. Só pastas que
+você autoriza podem ser limpas; Windows, programas, o Sentinel, pastas de servidores
+e bancos de dados nunca são tocados.
 
 ## Requisitos
 
@@ -57,6 +57,7 @@ python -m sentinel dashboard      # abre o dashboard em http://127.0.0.1:8765 co
 python -m sentinel stop           # pede ao agente que encerre de forma limpa
 python -m sentinel selfcheck      # testa API, segurança, tempo real e gravação de métricas
 python -m sentinel selfcheck --ai # uma pergunta real ao assistente (Ollama precisa estar ligado)
+python -m sentinel selfcheck --storage  # análise, quarentena, restauração e exclusão com arquivos de teste
 python -m sentinel ai-bench       # velocidade e precisão do modelo de IA nesta máquina
 python -m sentinel server list    # servidores cadastrados e seus estados
 python -m sentinel server restart <nome>   # também: start, stop

@@ -148,6 +148,18 @@ class SecuritySettings(_Section):
     autostart_scan_minutes: int = Field(10, ge=1, le=1440)
 
 
+class StorageSettings(_Section):
+    analysis_interval_hours: int = Field(24, ge=0, le=720)  # 0 = só quando o usuário pedir
+    full_disk_view: bool = True  # análise lê o tamanho das pastas de todos os discos (somente leitura)
+    large_file_mb: int = Field(200, ge=10, le=100_000)
+    temp_min_age_days: int = Field(7, ge=1, le=365)
+    log_min_age_days: int = Field(30, ge=1, le=3650)
+    duplicate_min_mb: int = Field(1, ge=1, le=10_000)
+    max_hash_gb: float = Field(4, ge=0.1, le=500)  # leitura máxima para comparar duplicados por análise
+    quarantine_max_gb: float = Field(5, ge=0.1, le=1000)
+    quarantine_retention_days: int = Field(30, ge=1, le=365)
+
+
 class RetentionSettings(_Section):
     """Retenção por categoria (PRD 16.2). Executada diariamente."""
 
@@ -190,6 +202,7 @@ class Settings(_Section):
     servers: ServersSettings = ServersSettings()
     security: SecuritySettings = SecuritySettings()
     ai: AISettings = AISettings()
+    storage: StorageSettings = StorageSettings()
     retention: RetentionSettings = RetentionSettings()
     api: ApiSettings = ApiSettings()
 

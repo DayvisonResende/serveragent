@@ -173,6 +173,41 @@ System32/SysWOW64. Ativar um serviço desativado, trocar o programa ou qualquer
 mudança em outro serviço continua gerando alerta; a linha de base é atualizada
 de qualquer forma.
 
+## D21 — Limpeza: pastas autorizadas + proteções arquivo a arquivo
+
+O que pode ser limpo é decidido por duas listas: pastas autorizadas (padrão:
+temporários e Downloads; o usuário edita) e proteções que valem mesmo dentro delas
+(Windows, programas, Inicializar, o Sentinel, pastas de servidores, arquivos de
+sistema, bancos de dados, arquivos só na nuvem). Uma pasta autorizada pode conter
+uma área protegida — um servidor dentro de Downloads, por exemplo: a proteção é
+conferida em cada arquivo, na análise e de novo antes de mover. Disco inteiro e
+pasta pessoal inteira não podem ser autorizados.
+
+## D22 — Plano fechado, revalidado e de uso único
+
+A análise vira uma lista de arquivos (o plano) com tamanho e data de cada um. A
+execução é a operação `cleanup_quarantine` do catálogo da Fase 4: a impressão
+digital é a própria lista, o plano só executa uma vez (UPDATE condicional) e cada
+arquivo é revalidado antes de mover; o que mudou desde a análise é ignorado. A IA
+pode montar um plano, mas o pedido fica pendente. `resolve` das operações passou a
+aceitar funções assíncronas, porque o plano vem do banco.
+
+## D23 — Quarentena antes de excluir; exclusão é nível 3
+
+Nada é apagado de imediato (PRD 8.5). Restaurar nunca sobrescreve um arquivo que
+tenha aparecido no lugar original. Excluir definitivamente é operação crítica:
+vale para uma limpeza inteira e exige digitar `limpeza #N`. A retenção (30 dias)
+é a única exclusão automática, configurada pelo usuário e auditada. A interface
+avisa que, no mesmo disco, o espaço só volta quando a quarentena é esvaziada.
+
+## D24 — Análise que não pesa
+
+Duplicados em três etapas (tamanho → 128 KB do início e do fim → SHA-256) com
+limite de leitura por análise; arquivos do OneDrive só na nuvem nunca são lidos
+(seriam baixados); links e junções não são seguidos; folgas a cada 500 entradas e
+pausa sob pressão severa. Medido no Linux: ~200 mil arquivos em 17 s, 44% de um
+núcleo. A análise automática roda no máximo uma vez a cada 24 h.
+
 ## Decisões futuras já identificadas
 
 - **Fase 4 — Aprovações:** vincular cada aprovação a um hash de

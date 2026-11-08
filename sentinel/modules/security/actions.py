@@ -15,13 +15,15 @@ Fluxo (PRD 11.4):
 
 from __future__ import annotations
 
+import inspect
+
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from sentinel.core.event_bus import Event, Severity
 from sentinel.database.repositories.actions import ActionRepository
 from sentinel.database.repositories.audit import AuditRepository
-from sentinel.modules.security.operations import ActionError, OperationSpec
+from sentinel.modules.security.operations import ActionError, OperationSpec, Target
 
 if TYPE_CHECKING:
     from sentinel.core.event_bus import EventBus
@@ -53,6 +55,13 @@ class ActionService:
     def catalog(self) -> dict[str, OperationSpec]:
         return self._catalog
 
+    def register(self, specs: dict[str, OperationSpec]) -> None:
+        """Outros módulos acrescentam suas operações ao catálogo fechado (ex.: limpeza)."""
+        clash = set(specs) & set(self._catalog)
+        if clash:
+            raise ValueError(f"operações já cadastradas: {', '.join(sorted(clash))}")
+        self._catalog.update(specs)
+
     async def request(
         self, operation: str, target_id: int, params: dict[str, Any] | None, requested_by: str, reason: str,
         approval: Approval,
@@ -60,7 +69,7 @@ class ActionService:
         """Registra o pedido. Com aprovação do usuário/política executa já; senão fica pendente."""
         spec = self._spec(operation)
         params = params or {}
-        target = spec.resolve(target_id, params)
+        target = await _resolve(spec, target_id, params)
         if approval == "required":
             existing = await self._repo.pending_for(operation, target.id)
             if existing:
@@ -140,7 +149,7 @@ class ActionService:
             raise ActionError(f"Operação crítica: digite o nome do alvo ('{action['target']}') para confirmar")
         # Revalida o alvo (PRD 11.4 passo 6): a aprovação vale só para o que foi pedido.
         try:
-            current = spec.resolve(action["target_id"], action["params"])
+            current = await _resolve(spec, action["target_id"], action["params"])
         except ActionError as exc:
             await self._repo.decide(action_id, "cancelled", "sentinel", str(exc))
             raise ActionError(f"Solicitação cancelada: {exc}") from exc
@@ -198,3 +207,9 @@ class ActionService:
     def _publish(self, event_type: str, severity: Severity, title: str, description: str, meta: dict[str, Any]) -> None:
         self._bus.publish(Event(event_type=event_type, source=SOURCE, severity=severity, title=title,
                                 description=description, metadata=meta))
+
+
+async def _resolve(spec: OperationSpec, target_id: int, params: dict[str, Any]) -> Target:
+    """``resolve`` pode ser síncrono (servidores, em memória) ou assíncrono (planos no banco)."""
+    target = spec.resolve(target_id, params)
+    return await target if inspect.isawaitable(target) else target

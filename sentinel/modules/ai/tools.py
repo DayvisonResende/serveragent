@@ -25,6 +25,7 @@ from sentinel.modules.servers.models import ServerState
 
 if TYPE_CHECKING:
     from sentinel.database.database import Database
+    from sentinel.modules.cleaner.module import CleanerModule
     from sentinel.modules.monitor.store import MetricsStore
     from sentinel.modules.security.module import SecurityModule
     from sentinel.modules.servers.manager import ServersModule
@@ -79,9 +80,11 @@ class ToolBox:
         security: SecurityModule | None,
         alerts: Callable[[], list[dict[str, Any]]],
         live_history_seconds: int = 3600,
+        storage: CleanerModule | None = None,
     ) -> None:
         self._store = store
         self._db = database
+        self._storage = storage
         self._servers = servers
         self._security = security
         self._alerts = alerts
@@ -104,6 +107,17 @@ class ToolBox:
                  _obj({"server_name": {"type": "string"}, "action": {"type": "string", "enum": ["start", "stop", "restart"]},
                        "reason": {"type": "string"}}, ["server_name", "action", "reason"]), self._request_action),
         ]}
+        if storage is not None:
+            self.tools.update({t.name: t for t in self._storage_tools()})
+
+    def _storage_tools(self) -> list[Tool]:
+        categories = {"type": "string", "enum": ["temp", "old_log", "duplicate", "large"]}
+        return [
+            Tool("get_storage_analysis", "Resultado da última análise de disco: o que ocupa espaço e o que pode ser limpo.",
+                 _obj(), self._storage_analysis),
+            Tool("request_cleanup", "Pede ao usuário aprovação para mover arquivos de uma categoria para a quarentena. Não executa nada.",
+                 _obj({"category": categories, "reason": {"type": "string"}}, ["category", "reason"]), self._request_cleanup),
+        ]
 
     def definitions(self) -> list[dict[str, Any]]:
         return [t.definition() for t in self.tools.values()]
@@ -250,6 +264,45 @@ class ToolBox:
                 "cpu_pico_percent": _round(max(p["cpu_max"] for p in points if p["cpu_max"] is not None)) if cpu else None,
                 "memoria_media_percent": _round(sum(ram) / len(ram)) if ram else None,
                 "memoria_pico_percent": _round(max(ram)) if ram else None}
+
+    async def _storage_analysis(self, args: dict[str, Any]) -> dict[str, Any]:
+        if self._storage is None:
+            return {"erro": "módulo de armazenamento indisponível"}
+        st = await self._storage.status()
+        last = st["last_completed"]
+        if last is None:
+            return {"observacao": "nenhuma análise concluída; o usuário pode rodar uma na página Armazenamento",
+                    "analise_em_andamento": st["running"]}
+        s = last["summary"]
+        labels = {"temp": "temporários antigos", "old_log": "logs antigos", "duplicate": "duplicados", "large": "arquivos grandes"}
+        return {
+            "aviso": UNTRUSTED_NOTICE,
+            "analise_em": _local(last["finished_at"]),
+            "analise_em_andamento": st["running"],
+            "limpavel_estimado_mb": _round(s.get("recoverable_bytes", 0) / MB, 0),
+            "categorias": {labels.get(k, k): {"arquivos_limpaveis": v["cleanable_files"], "mb_limpaveis": _round(v["cleanable_bytes"] / MB, 0)}
+                           for k, v in s.get("categories", {}).items()},
+            "pastas_maiores": [{"pasta": _clean(d["path"], 160), "gb": _round(d["bytes"] / GB, 1)} for d in s.get("top_dirs", [])[:6]],
+            "cresceram": [{"pasta": _clean(g["path"], 160), "mb": _round(g["delta_bytes"] / MB, 0)} for g in s.get("growth", [])],
+            "quarentena_mb": _round(st["quarantine"]["bytes"] / MB, 0),
+            "observacao": "valores limpáveis são estimativas; mover para a quarentena no mesmo disco só libera espaço quando ela é esvaziada",
+        }
+
+    async def _request_cleanup(self, args: dict[str, Any]) -> dict[str, Any]:
+        if self._storage is None or self._security is None or self._security.actions is None:
+            return {"erro": "pedidos de limpeza indisponíveis"}
+        from sentinel.modules.cleaner.module import StorageError
+        from sentinel.modules.security.operations import ActionError
+
+        try:
+            plan = await self._storage.create_plan(AI_ACTOR, category=args["category"], reason=f"Pedido da IA: {_clean(args['reason'], 200)}")
+            action = await self._security.actions.request("cleanup_quarantine", plan["id"], {}, AI_ACTOR,
+                                                          f"Pedido da IA: {_clean(args['reason'], 200)}", approval="required")
+        except (StorageError, ActionError) as exc:
+            return {"erro": str(exc)}
+        return {"pedido": action["id"], "arquivos": plan["files_found"], "mb": _round(plan["bytes_recoverable"] / MB, 0),
+                "situacao": "aguardando aprovação do usuário",
+                "observacao": "Nada foi movido. O usuário decide na página Aprovações."}
 
     async def _request_action(self, args: dict[str, Any]) -> dict[str, Any]:
         if self._servers is None or self._security is None or self._security.actions is None:

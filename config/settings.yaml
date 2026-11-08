@@ -83,6 +83,17 @@ ai:                                 # IA local via Ollama (PRD 9)
   keep_alive_minutes: 5             # descarrega o modelo da memória após inatividade
   timeout_seconds: 180
 
+storage:                            # análise de armazenamento e limpeza (PRD 8)
+  analysis_interval_hours: 24       # análise automática; 0 = só quando você pedir no dashboard
+  full_disk_view: true              # mede as pastas de todos os discos (só leitura; a limpeza fica nas pastas autorizadas)
+  large_file_mb: 200                # a partir deste tamanho o arquivo entra em "arquivos grandes"
+  temp_min_age_days: 7              # temporários mais novos que isso não são sugeridos
+  log_min_age_days: 30              # logs antigos
+  duplicate_min_mb: 1               # duplicados menores que isso são ignorados
+  max_hash_gb: 4                    # leitura máxima de disco por análise para comparar duplicados
+  quarantine_max_gb: 5              # espaço máximo da quarentena
+  quarantine_retention_days: 30     # após isso, itens da quarentena são excluídos definitivamente
+
 retention:                          # dias mantidos por categoria (PRD 16.2)
   metrics_days: 30
   process_snapshots_days: 7

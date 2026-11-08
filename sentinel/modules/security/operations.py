@@ -36,7 +36,7 @@ class OperationSpec:
     risk_level: int  # 0 observação · 1 leve · 2 exige aprovação · 3 crítica (confirmação extra)
     impact: str
     risks: str
-    resolve: Callable[[int, dict[str, Any]], Target]
+    resolve: Callable[[int, dict[str, Any]], Target | Awaitable[Target]]
     execute: Callable[[int, dict[str, Any], str, str, int | None], Awaitable[dict[str, Any]]]
 
 
