@@ -939,6 +939,95 @@ Executar uma operação coberta por uma delegação ativa, dentro dos limites de
 
 O modelo deverá apenas solicitar ferramentas conhecidas e autorizadas.
 
+## 9.8. IA operadora
+
+### 9.8.1. Objetivo
+
+A IA deixa de apenas responder perguntas e passa a executar trabalho: atender incidentes, fazer rondas de plantão, cumprir rotinas pedidas pelo usuário, investigar problemas e propor procedimentos — sempre prestando contas do que fez.
+
+A IA operadora age somente pelo catálogo de operações (seção 11.5), dentro das delegações e limites da autonomia delegada (seção 11.7). Fora delas, ela prepara o trabalho e pede aprovação.
+
+### 9.8.2. Fila de tarefas
+
+Origens de tarefas:
+
+- Eventos do Sentinel (servidor caiu, disco quase cheio, anomalia detectada).
+- Agendamentos (rondas, rotinas aprovadas).
+- Pedidos do usuário no chat.
+
+Cada tarefa registra: identificador, origem, objetivo, procedimento escolhido, passos executados, evidências, estado, limites, resultado e horário.
+
+Estados: na fila, em andamento, aguardando aprovação, concluída, falhou, cancelada, interrompida por limite.
+
+### 9.8.3. Ciclo de trabalho
+
+1. Entender o objetivo e coletar dados com ferramentas de consulta.
+2. Escolher um procedimento e preencher seus parâmetros.
+3. Executar cada passo pelo executor restrito.
+4. Conferir o resultado de cada passo com medições do Sentinel.
+5. Registrar tudo no Diário da IA e notificar quando relevante.
+
+Limites de cada tarefa: número máximo de passos (padrão 10), tempo máximo e tempo de CPU do modelo. Atingido um limite, a tarefa é interrompida e relatada.
+
+Regras de convivência com o computador:
+
+- Uma tarefa por vez (o modelo ocupa a CPU).
+- Incidentes têm prioridade sobre rondas e rotinas.
+- Trabalho não urgente roda preferencialmente com o computador ocioso e pausa sob pressão de recursos (seção 13).
+- Os servidores têm prioridade sobre a IA.
+
+### 9.8.4. Procedimentos
+
+Um procedimento é uma sequência de operações do catálogo com condições, verificações e o que fazer em caso de falha. Exemplo:
+
+1. Servidor gerenciado ficou offline.
+2. Guardar as últimas linhas do log.
+3. Reiniciar.
+4. Verificar porta e processo.
+5. Se não voltar: aguardar, tentar uma segunda vez; se falhar de novo, suspender e alertar o usuário com o diagnóstico.
+
+A IA escolhe o procedimento e preenche os parâmetros; ela não monta sequências livres para execução autônoma. Procedimentos novos — inclusive os propostos pela própria IA a partir da experiência (seção 10.7) — exigem aprovação do usuário antes de serem usados sem supervisão.
+
+### 9.8.5. Tipos de trabalho
+
+- **Atendimento a incidentes:** investigar a queda (logs, CPU, RAM e processos no momento), aplicar a correção delegada, verificar, tentar o próximo passo se necessário e entregar um relatório: o que aconteceu, evidências, o que foi feito, resultado e recomendação.
+- **Rondas de plantão:** revisar o estado geral, executar limpezas delegadas, compactar logs de servidores que cresceram, acompanhar a tendência do disco e produzir o relatório diário (seção 19.2).
+- **Rotinas pedidas no chat:** um pedido como "faça backup do mundo toda sexta" vira uma automação (seção 12.3) proposta ao usuário; aprovada uma vez, passa a ser executada sozinha dentro dos limites.
+- **Investigações:** cruzar dados históricos para explicar um problema (ex.: picos de CPU de madrugada), apresentando hipóteses, evidências e grau de confiança (seção 19.1).
+- **Manutenção do próprio Sentinel:** integridade e compactação do banco, verificação dos próprios erros.
+
+### 9.8.6. Operações adicionais do catálogo
+
+Cada uma com validação própria e alvo identificado:
+
+| Operação | Nível | Delegável |
+|---|---|---|
+| Backup da pasta de dados de um servidor cadastrado para um destino configurado, com rotação | 2 | Sim |
+| Compactar e arquivar o log de um servidor gerenciado acima de um tamanho | 2 | Sim |
+| Baixar a prioridade de um processo que esteja saturando a CPU (nunca processos do sistema ou protegidos) | 2 | Sim |
+| Encerrar o processo de um servidor gerenciado que excedeu um limite definido (ex.: memória), seguido de reinício | 2 | Sim |
+| Reiniciar o serviço do Ollama | 1 | Sim |
+| Manutenção do banco do Sentinel | 1 | Sim |
+
+### 9.8.7. Diário da IA
+
+O dashboard terá uma página com todo o trabalho da IA: tarefas, passos, evidências, ações, resultados e o que pode ser desfeito. O diário complementa a auditoria (seção 11.6), que continua sendo o registro oficial e imutável.
+
+A IA deverá relatar quando não conseguiu concluir uma tarefa. Nunca poderá relatar sucesso sem a verificação real do resultado (seção 26.2).
+
+### 9.8.8. Modelo utilizado
+
+Por padrão, todo o trabalho usa o modelo local (seção 9.2).
+
+Opcionalmente, e desativado por padrão, o usuário poderá autorizar um modo híbrido: um modelo remoto mais capaz é usado apenas em investigações e na proposta de procedimentos, enquanto o dia a dia continua local. Requisitos do modo híbrido:
+
+- Autorização explícita do usuário, revogável.
+- Enviar o mínimo de dados necessário e mostrar ao usuário o que foi enviado.
+- Nunca enviar senhas, tokens ou outros segredos.
+- Limite de custo configurável.
+- Se o modelo remoto estiver indisponível, o trabalho continua com o modelo local.
+- As ações continuam passando pelas mesmas ferramentas, delegações e limites.
+
 ---
 
 # 10. MÓDULO DE APRENDIZADO AUTÔNOMO
@@ -1297,6 +1386,7 @@ Lista fechada:
 - Mover para a quarentena duplicados e arquivos grandes, dentro das pastas autorizadas — somente se o usuário marcar estas categorias explicitamente.
 - Restaurar da quarentena um arquivo que a própria autonomia moveu (desfazer).
 - Executar análise de armazenamento e gerar relatórios (níveis 0 e 1).
+- As operações adicionais da IA operadora marcadas como delegáveis (seção 9.8.6).
 
 Cada operação é delegada separadamente; reinícios podem ser delegados por servidor.
 
@@ -2415,18 +2505,18 @@ Entregas:
 - Relatórios.
 - Diagnóstico.
 
-## Fase 6B — Autonomia delegada
+## Fase 6B — Autonomia delegada e IA operadora
 
-Objetivo: permitir que o Sentinel e a IA cuidem de operações não críticas sem aprovação caso a caso (seção 11.7).
+Objetivo: permitir que o Sentinel e a IA cuidem do computador e dos servidores sem aprovação caso a caso, dentro dos limites do usuário (seções 9.8 e 11.7).
 
-Entregas:
+Entregas, nesta ordem:
 
-- Delegações por operação e por servidor, desativadas por padrão.
-- Motor de políticas com limites e verificação depois da ação.
-- Evidência obrigatória para ações iniciadas pela IA.
-- Interruptor "Pausar autonomia".
-- Notificações e resumo diário das ações autônomas.
-- Página de configuração no dashboard.
+1. Autonomia delegada: delegações por operação e por servidor (desativadas por padrão), motor de políticas com limites e verificação depois da ação, evidência obrigatória para ações da IA, interruptor "Pausar autonomia", notificações e página de configuração.
+2. IA operadora — base: fila de tarefas, ciclo de trabalho com limites, atendimento a incidentes com procedimentos e Diário da IA.
+3. Rondas de plantão com relatório diário e rotinas pedidas no chat.
+4. Operações adicionais do catálogo (seção 9.8.6).
+5. Procedimentos aprendidos (propostos pela IA, aprovados pelo usuário).
+6. Modo híbrido opcional (seção 9.8.8), somente se o usuário decidir usá-lo.
 
 ## Fase 7 — Aprendizado autônomo
 
