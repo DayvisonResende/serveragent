@@ -84,9 +84,15 @@ class ActionService:
         await self._audit.record(actor=requested_by, operation="action.request", target=target.name, reason=reason,
                                  result="pending", details={"action_id": action_id, "operation": operation})
         if approval == "required" or requires_confirmation:
-            self._publish(EVENT_REQUESTED, Severity.WARNING, f"Aprovação pendente: {spec.label.lower()} '{target.name}'",
-                          f"{reason} Abra o dashboard (Aprovações) para aprovar ou rejeitar.",
-                          {"action_id": action_id, "operation": operation, "target": target.name})
+            if approval == "user":
+                # O próprio usuário pediu e está digitando a confirmação: registro, sem alarme (nem Telegram).
+                self._publish(EVENT_REQUESTED, Severity.INFO, f"Confirmação pedida: {spec.label.lower()} '{target.name}'",
+                              "Operação crítica: aguardando o usuário digitar o nome do alvo.",
+                              {"action_id": action_id, "operation": operation, "target": target.name})
+            else:
+                self._publish(EVENT_REQUESTED, Severity.WARNING, f"Aprovação pendente: {spec.label.lower()} '{target.name}'",
+                              f"{reason} Abra o dashboard (Aprovações) para aprovar ou rejeitar.",
+                              {"action_id": action_id, "operation": operation, "target": target.name})
             return await self._get(action_id)
         decided_by = requested_by if approval == "user" else POLICY_APPROVER
         return await self._approve_and_run(action_id, decided_by, confirmation=None)

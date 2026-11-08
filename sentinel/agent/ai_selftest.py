@@ -65,8 +65,11 @@ def run(settings: Settings) -> list[Check]:
     names = [item["server"]["name"] for item in http.request("GET", "/api/v1/servers")["servers"]]
     if names:
         missing = [n for n in names if n.lower() not in text.lower()]
-        checks.append(Check("Resposta usa os dados (cita os servidores)", not missing,
-                            "cita " + ", ".join(names) if not missing else f"não cita: {', '.join(missing)}"))
+        # "Não sabe. Caddy: offline..." também é falha: o modelo repetiu a regra em vez de usar os dados.
+        denies = text.lower().lstrip(" .,:-").startswith(("não sei", "não sabe", "nao sei", "nao sabe"))
+        detail = (f"não cita: {', '.join(missing)}" if missing else
+                  "começa dizendo que não sabe, embora tenha os dados" if denies else "cita " + ", ".join(names))
+        checks.append(Check("Resposta usa os dados (cita os servidores)", not missing and not denies, detail))
 
     try:
         loaded = OllamaClient(ai.ollama_url, timeout=15).loaded()
