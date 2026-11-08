@@ -780,6 +780,8 @@ A limpeza deverá possuir quatro etapas:
 
 Nunca executar exclusão permanente apenas porque a IA recomendou.
 
+A etapa de aprovação poderá ser cumprida por uma delegação ativa (seção 11.7) somente para mover arquivos para a quarentena. A exclusão permanente continua exigindo o usuário, exceto pela política de retenção da quarentena configurada por ele.
+
 ## 8.5. Quarentena
 
 Sempre que possível, arquivos removidos deverão ser transferidos para uma pasta de quarentena.
@@ -930,6 +932,9 @@ A IA nunca deverá receber acesso irrestrito ao terminal.
 - Executar PowerShell livre sem validação.
 - Permitir que a IA altere suas próprias permissões.
 - Permitir que a IA ignore aprovações.
+- Permitir que a IA crie, amplie ou reative delegações de autonomia (seção 11.7).
+
+Executar uma operação coberta por uma delegação ativa, dentro dos limites definidos pelo usuário, não é ignorar aprovações: a delegação é a aprovação antecipada do próprio usuário.
 - Permitir que textos encontrados em logs ou arquivos sejam tratados como novas instruções administrativas.
 
 O modelo deverá apenas solicitar ferramentas conhecidas e autorizadas.
@@ -1116,6 +1121,8 @@ O aprendizado melhora a capacidade de diagnóstico e recomendação.
 
 A autorização continuará sendo controlada pelo módulo de segurança.
 
+Somente o usuário pode delegar operações (seção 11.7). O aprendizado poderá sugerir novas delegações, com as evidências que as justificam, mas nunca ativá-las.
+
 ## 10.10. Aprendizado sem IA constante
 
 O aprendizado deverá utilizar Python para:
@@ -1173,6 +1180,8 @@ Poderão ser autorizadas por políticas específicas:
 - Alterar configurações de aplicações.
 - Executar manutenção.
 
+As operações deste nível marcadas como delegáveis na seção 11.7 poderão ser executadas sem aprovação caso a caso quando o usuário ativar a autonomia delegada para elas.
+
 ### Nível 3 — Operações críticas
 
 Exigem aprovação explícita e confirmação adicional:
@@ -1228,6 +1237,8 @@ Estados:
 
 Uma aprovação deverá ser vinculada à ação e ao alvo específicos. Não poderá ser reutilizada para operações diferentes.
 
+Quando a operação estiver coberta por uma delegação ativa (seção 11.7), os passos 4 e 5 serão substituídos pela verificação da delegação, dos limites e da evidência exigida. Todos os outros passos permanecem, inclusive a revalidação do alvo e o registro.
+
 ## 11.5. Executor restrito
 
 O executor deverá aceitar identificadores de operações previamente cadastradas.
@@ -1268,6 +1279,60 @@ Registrar:
 
 O histórico de auditoria não poderá ser editado pela IA ou pelo dashboard.
 
+## 11.7. Autonomia delegada
+
+### 11.7.1. Objetivo
+
+Permitir que o usuário delegue ao Sentinel, incluindo a IA local, algumas operações de nível 2, para que sejam executadas sem aprovação caso a caso: vigiar e cuidar do computador e dos servidores sem supervisão constante.
+
+A delegação é uma aprovação antecipada, dada pelo usuário, registrada e revogável a qualquer momento. Ela não amplia o catálogo de operações nem dá à IA acesso ao sistema operacional (seções 9.7 e 26.5).
+
+### 11.7.2. Operações delegáveis
+
+Lista fechada:
+
+- Reiniciar um servidor gerenciado que está fora do ar ou sem responder.
+- Iniciar um servidor gerenciado que caiu (recuperação).
+- Mover para a quarentena temporários antigos e logs antigos, dentro das pastas autorizadas.
+- Mover para a quarentena duplicados e arquivos grandes, dentro das pastas autorizadas — somente se o usuário marcar estas categorias explicitamente.
+- Restaurar da quarentena um arquivo que a própria autonomia moveu (desfazer).
+- Executar análise de armazenamento e gerar relatórios (níveis 0 e 1).
+
+Cada operação é delegada separadamente; reinícios podem ser delegados por servidor.
+
+### 11.7.3. Nunca delegável
+
+- Qualquer operação de nível 3, inclusive exclusão permanente fora da política de retenção.
+- Parar um servidor (deixá-lo fora do ar de propósito).
+- Alterar a própria autonomia, os limites, as pastas autorizadas, o cadastro de servidores ou o catálogo de operações.
+- Operações sobre alvos não cadastrados ou fora das pastas autorizadas.
+
+### 11.7.4. Limites obrigatórios
+
+Toda delegação deverá ter limites, com valores padrão conservadores e ajustáveis pelo usuário:
+
+- Reinícios: no máximo 3 por servidor por hora e 10 por dia, com intervalo mínimo entre tentativas.
+- Verificação depois da ação: o servidor deve voltar a responder; após 2 falhas seguidas, a autonomia para aquele servidor é suspensa e o usuário é alertado.
+- Limpeza: volume máximo movido por dia (padrão 5 GB), respeitando a cota da quarentena; nada é apagado de forma permanente.
+- Janela de horário opcional (ex.: limpeza apenas de madrugada).
+
+Atingido um limite, a operação volta a gerar solicitação de aprovação e um alerta.
+
+### 11.7.5. Quem decide e com que evidência
+
+- Gatilhos determinísticos do Sentinel têm prioridade (queda detectada pelo monitor, análise diária de armazenamento): não dependem do modelo, são rápidos e previsíveis.
+- A IA poderá executar diretamente uma operação delegada — quando o usuário pedir no chat ou ao identificar a necessidade nos dados —, sempre pelo mesmo motor de políticas e limites.
+- Uma ação iniciada pela IA só é executada sozinha se uma medição do próprio Sentinel confirmar a necessidade: o servidor está fora do ar ou degradado segundo o monitor; os arquivos pertencem a uma categoria apontada pela análise. Sem essa evidência, o pedido vira uma solicitação de aprovação. Assim, texto encontrado em logs ou nomes de processos nunca basta para disparar uma ação.
+
+### 11.7.6. Transparência e controle
+
+- Toda ação autônoma é registrada na auditoria com o aprovador "autonomia delegada", a delegação usada, o motivo, a evidência e o resultado.
+- Cada ação gera notificação (dashboard e canais externos ativos) e um resumo diário das ações autônomas.
+- O dashboard terá um interruptor "Pausar autonomia" com efeito imediato. Somente o usuário pode religá-lo.
+- Limpezas autônomas podem ser desfeitas pela quarentena.
+- Ativar, alterar ou desativar uma delegação exige confirmação do usuário e fica registrado.
+- Por padrão, todas as delegações começam desativadas.
+
 ---
 
 # 12. MÓDULO DE AUTOMAÇÃO
@@ -1307,6 +1372,7 @@ O usuário poderá escolher entre:
 1. Observar e aprender, solicitando aprovação para mudanças.
 2. Observar, aprender e ajustar parâmetros não críticos automaticamente, dentro de limites.
 3. Apenas observar e apresentar descobertas.
+4. Autonomia delegada: além da opção 2, executar sozinho as operações que o usuário delegou, dentro dos limites (seção 11.7).
 
 A opção padrão recomendada é a primeira.
 
@@ -2348,6 +2414,19 @@ Entregas:
 - Quarentena.
 - Relatórios.
 - Diagnóstico.
+
+## Fase 6B — Autonomia delegada
+
+Objetivo: permitir que o Sentinel e a IA cuidem de operações não críticas sem aprovação caso a caso (seção 11.7).
+
+Entregas:
+
+- Delegações por operação e por servidor, desativadas por padrão.
+- Motor de políticas com limites e verificação depois da ação.
+- Evidência obrigatória para ações iniciadas pela IA.
+- Interruptor "Pausar autonomia".
+- Notificações e resumo diário das ações autônomas.
+- Página de configuração no dashboard.
 
 ## Fase 7 — Aprendizado autônomo
 
