@@ -100,6 +100,8 @@ try {
     # Impressão digital do código: compare com a informada pelo desenvolvedor (cópia completa?).
     $codeLine = (& $Py -m sentinel code-check 2>$null | Out-String).Trim()
     Write-Report ("[INFO]  " + $(if ($codeLine) { $codeLine } else { "Código: não foi possível calcular" }))
+    $commit = if (Get-Command git -ErrorAction SilentlyContinue) { (& git -C $Root log -1 --format="%h %ci %s" 2>$null | Out-String).Trim() } else { "" }
+    Write-Report ("[INFO]  Commit: " + $(if ($commit) { $commit } else { "não disponível (git não encontrado)" }))
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     if ($null -eq $task) {
         Add-Result "Tarefa agendada" $false "Tarefa '$TaskName' não existe."
