@@ -221,6 +221,18 @@ instruções e descrições das ferramentas encurtadas (−24% de texto;
 o modelo pode pedir até 4 consultas de uma vez; a segunda rodada só escreve a
 resposta e lê ~400 tokens em vez de ~1000.
 
+## D26 — Correção da D25: qualidade antes de velocidade
+
+No OptiPlex, com as instruções enxutas e a segunda rodada sem a lista de
+ferramentas, a IA consultou `get_servers` e respondeu "Não sabe" — e o tempo só
+caiu de 27 s para 25 s, embora o texto lido tenha caído pela metade (a leitura não
+é o principal custo). Revertido: instruções voltam à redação validada e
+`max_tool_rounds` volta a 3 (com 1 a resposta é mais rápida, mas não é o padrão).
+Ficam as descrições curtas das ferramentas e o aquecimento que só carrega o
+modelo. O autoteste agora exige que a resposta cite os servidores cadastrados e
+mostra o tempo por partes (leitura, escrita, resto) para a próxima decisão sobre
+velocidade ser tomada com números.
+
 ## Decisões futuras já identificadas
 
 - **Fase 4 — Aprovações:** vincular cada aprovação a um hash de

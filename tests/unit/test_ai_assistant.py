@@ -244,8 +244,8 @@ def test_warm_up_reads_prompt_once_and_question_waits_for_it(tmp_path):
     assert len(seen) == 1  # o aquecimento só carrega o modelo: nenhuma leitura de instruções desperdiçada
 
 
-def test_only_first_round_gets_the_tool_list_by_default(tmp_path):
-    """O LFM3 relê tudo a cada rodada: a segunda só escreve a resposta, sem a lista de ferramentas."""
+def test_single_tool_round_setting_answers_without_tool_list(tmp_path):
+    """max_tool_rounds=1: a segunda rodada só escreve a resposta (opção mais rápida, não é o padrão — D26)."""
     script = [reply(calls=[{"name": "get_system_status", "arguments": {}}, {"name": "get_servers", "arguments": {}}]),
               reply("CPU ok e nenhum servidor.")]
 
@@ -253,7 +253,7 @@ def test_only_first_round_gets_the_tool_list_by_default(tmp_path):
         result = await assistant.ask("c1", "como está tudo?")
         return result, client.seen
 
-    result, seen = run(tmp_path, script, scenario)
+    result, seen = run(tmp_path, script, scenario, settings=AISettings(max_tool_rounds=1))
     assert len(seen[0]["tools"]) >= 7 and seen[1]["tools"] == []
     assert [t["ferramenta"] for t in result["ferramentas"]] == ["get_system_status", "get_servers"]  # várias numa rodada
 

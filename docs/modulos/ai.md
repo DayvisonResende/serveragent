@@ -35,7 +35,7 @@ Nome de ferramenta desconhecido ou argumento inválido volta ao modelo como
 |---|---|---|
 | `model` | `hf.co/LiquidAI/LFM3-1.7B-GGUF:Q4_K_M` | medido em 12 tokens/s e 1,1 GB no i3-4150T (D17) |
 | `history_messages` | 6 | cada token lido custa tempo de CPU |
-| `max_tool_rounds` | 1 | rodadas com a lista de ferramentas (até 4 consultas cada); depois a IA só responde (D25) |
+| `max_tool_rounds` | 3 | rodadas de consulta; 1 é mais rápido, mas a resposta piorou no teste (D26) |
 | `keep_alive_minutes` | 5 | o Ollama libera a RAM do modelo após esse tempo sem uso |
 | `timeout_seconds` | 180 | por chamada ao modelo |
 | `ollama_url` | `http://127.0.0.1:11434` | só endereços locais são aceitos |
@@ -53,4 +53,4 @@ Nome de ferramenta desconhecido ou argumento inválido volta ao modelo como
 
 `verificar.bat`, etapa 9 (`sentinel selfcheck --ai`): Ollama e modelo presentes,
 o aquecimento, uma pergunta real ("quantos servidores…") pelo mesmo caminho do dashboard,
-confirmação de que a IA consultou uma ferramenta e a memória ocupada pelo modelo.
+confirmação de que a IA consultou uma ferramenta e de que a resposta cita os servidores cadastrados, tempo por partes e a memória ocupada pelo modelo.

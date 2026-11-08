@@ -51,11 +51,22 @@ def run(settings: Settings) -> list[Check]:
         return checks
     elapsed = time.monotonic() - started
     text = " ".join(str(answer.get("answer", "")).split())
+    read_s, write_s = answer.get("tempo_leitura", 0), answer.get("tempo_escrita", 0)
+    other = max(elapsed - read_s - write_s, 0)
     checks.append(Check("Chat com a IA (pergunta real)", bool(text),
-                        f"{elapsed:.0f} s, {answer.get('tokens_lidos', 0)} tokens lidos, {answer.get('tokens_gerados', 0)} gerados · \"{text[:160]}{'…' if len(text) > 160 else ''}\""))
+                        f"{elapsed:.0f} s ({answer.get('rodadas', '?')} rodada(s): leitura {read_s:.0f} s de "
+                        f"{answer.get('tokens_lidos', 0)} tokens, escrita {write_s:.0f} s de {answer.get('tokens_gerados', 0)} tokens, "
+                        f"resto {other:.0f} s) · \"{text[:160]}{'…' if len(text) > 160 else ''}\""))
     used = [t["ferramenta"] for t in answer.get("ferramentas", []) if t.get("ok")]
     checks.append(Check("IA consultou dados reais (ferramentas)", bool(used),
                         ", ".join(used) if used else "respondeu sem consultar nenhuma ferramenta"))
+
+    # Consultar não basta: a resposta precisa USAR o resultado (aconteceu de responder "não sei" com os dados em mãos).
+    names = [item["server"]["name"] for item in http.request("GET", "/api/v1/servers")["servers"]]
+    if names:
+        missing = [n for n in names if n.lower() not in text.lower()]
+        checks.append(Check("Resposta usa os dados (cita os servidores)", not missing,
+                            "cita " + ", ".join(names) if not missing else f"não cita: {', '.join(missing)}"))
 
     try:
         loaded = OllamaClient(ai.ollama_url, timeout=15).loaded()

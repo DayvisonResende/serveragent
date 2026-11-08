@@ -125,7 +125,7 @@ class AISettings(_Section):
     # Escolhido pelo teste de viabilidade no OptiPlex (i3-4150T): 4/4 nas ferramentas, 12 tokens/s, 1,1 GB.
     model: str | None = "hf.co/LiquidAI/LFM3-1.7B-GGUF:Q4_K_M"
     history_messages: int = Field(6, ge=0, le=40)        # mensagens anteriores enviadas ao modelo
-    max_tool_rounds: int = Field(1, ge=1, le=6)          # consultas encadeadas por pergunta
+    max_tool_rounds: int = Field(3, ge=1, le=6)          # consultas encadeadas por pergunta
     keep_alive_minutes: int = Field(5, ge=0, le=120)   # descarrega após inatividade
     timeout_seconds: int = Field(180, ge=10, le=1800)
 
