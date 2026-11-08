@@ -8,3 +8,6 @@ __pycache__/
 data/
 logs/
 .env
+
+# Pacotes de atualização para o Windows (git archive)
+dist/

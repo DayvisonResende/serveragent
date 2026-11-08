@@ -97,6 +97,9 @@ try {
 
     # 1. Estado ----------------------------------------------------------------
     Write-Report "== 1. Estado do agente =="
+    # Impressão digital do código: compare com a informada pelo desenvolvedor (cópia completa?).
+    $codeLine = (& $Py -m sentinel code-check 2>$null | Out-String).Trim()
+    Write-Report ("[INFO]  " + $(if ($codeLine) { $codeLine } else { "Código: não foi possível calcular" }))
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     if ($null -eq $task) {
         Add-Result "Tarefa agendada" $false "Tarefa '$TaskName' não existe."

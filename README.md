@@ -44,6 +44,8 @@ Atalhos de dois cliques na raiz do projeto:
 | `iniciar-com-windows.bat` | faz o Sentinel subir com o Windows, sem logon (pede a senha da conta) |
 | `testar-ia.bat` | baixa o modelo e mede a IA local (Ollama): velocidade, memória e uso de ferramentas |
 | `diagnosticar-ia.bat` | mede se o Ollama reaproveita a leitura das instruções entre perguntas (1–2 min) |
+| `atualizar.bat` | aplica um pacote `sentinel-*.zip` copiado para a pasta: extrai, reinstala e mostra o código instalado |
+| `conferir-codigo.bat` | lista o hash de cada arquivo instalado, para achar uma cópia incompleta |
 | `investigar-processo.bat` | relatório **somente leitura** sobre um executável suspeito (assinatura, hash, origem, inicialização automática) |
 
 ## Uso

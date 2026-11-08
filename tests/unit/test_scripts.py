@@ -55,3 +55,18 @@ def test_investigation_script_is_read_only():
     # Escritas: somente a pasta de logs e o próprio relatório.
     assert re.findall(r"Add-Content\s+-Path\s+(\$\w+)", code) == ["$Report"]
     assert re.findall(r"New-Item\b.*?-Path\s+(\$\w+)", code) == ["$LogDir"]
+
+
+def test_code_fingerprint_ignores_line_endings_and_detects_changes(tmp_path):
+    from sentinel.agent.fingerprint import fingerprint
+
+    (tmp_path / "sentinel").mkdir()
+    (tmp_path / "sentinel" / "a.py").write_bytes(b"x = 1\ny = 2\n")
+    (tmp_path / "sentinel" / "__pycache__").mkdir()
+    (tmp_path / "sentinel" / "__pycache__" / "a.py").write_bytes(b"lixo")
+    code, rows = fingerprint(tmp_path)
+    assert [name for name, _ in rows] == ["sentinel/a.py"]  # cache do Python não conta
+    (tmp_path / "sentinel" / "a.py").write_bytes(b"x = 1\r\ny = 2\r\n")  # cópia que virou CRLF
+    assert fingerprint(tmp_path)[0] == code
+    (tmp_path / "sentinel" / "a.py").write_bytes(b"x = 1\ny = 3\n")  # conteúdo antigo/diferente
+    assert fingerprint(tmp_path)[0] != code

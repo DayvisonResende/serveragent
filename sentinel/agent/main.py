@@ -76,6 +76,8 @@ def main(argv: list[str] | None = None) -> int:
     bench.add_argument("--pull", action="store_true", help="baixar os modelos candidatos que faltarem (~4 GB)")
     bench.add_argument("--model", action="append", help="testar apenas este modelo do Ollama (pode repetir)")
     bench.add_argument("--cache", action="store_true", help="diagnóstico: o Ollama reaproveita a leitura das instruções entre perguntas?")
+    code = commands.add_parser("code-check", help="impressão digital do código instalado (confere se a cópia está completa)")
+    code.add_argument("--files", action="store_true", help="lista o hash de cada arquivo")
     srv = commands.add_parser("server", help="consulta e opera servidores cadastrados")
     srv.add_argument("action", choices=["list", "start", "stop", "restart"])
     srv.add_argument("name", nargs="?", help="nome do servidor (exceto em 'list')")
@@ -93,6 +95,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_status(settings, as_json=args.json)
         if args.command == "selfcheck":
             return cmd_selfcheck(settings, as_json=args.json, servers=args.servers, costs=args.costs, ai=args.ai, storage=args.storage)
+        if args.command == "code-check":
+            return cmd_code_check(args.files)
         if args.command == "ai-bench":
             return cmd_ai_bench(settings, args.pull, args.model, args.cache)
         if args.command == "server":
@@ -230,6 +234,18 @@ def cmd_selfcheck(settings: Settings, as_json: bool = False, servers: str | None
         for c in checks:
             print(f"[{'OK' if c.ok else 'FALHA':5}] {c.name} - {c.detail}")
     return EXIT_OK if checks and all(c.ok for c in checks) else EXIT_ERROR
+
+
+def cmd_code_check(files: bool) -> int:
+    from sentinel.agent.config import PROJECT_ROOT
+    from sentinel.agent.fingerprint import fingerprint
+
+    code, rows = fingerprint(PROJECT_ROOT)
+    print(f"Código {code} ({len(rows)} arquivos)")
+    if files:
+        for name, digest in rows:
+            print(f"{digest}  {name}")
+    return EXIT_OK
 
 
 def cmd_ai_bench(settings: Settings, pull: bool, only: list[str] | None, cache: bool = False) -> int:
